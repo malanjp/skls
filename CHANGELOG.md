@@ -11,15 +11,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.0] - 2026-08-04
 
+### Highlights
+
+- **See what Cursor actually sees** — inventory now covers `~/.agents/skills` and `~/.cursor/skills-cursor`, so skills that appear in Cursor (e.g. `brand`) show up in skls and can be deleted from the right path
+- **27 agent hosts** — beyond Cursor / Claude Code / Codex: gemini-cli, antigravity*, github-copilot, opencode, pi, amp, kimi-cli, replit, qwen-code, augment, continue, droid, kilo, qoder, roo, trae, codebuddy, grok, cline, warp, universal, devin
+- **Reliable npx cleanup** — deleting an npx-sourced skill removes filesystem paths *and* runs `npx skills remove` (lockfile / shared store stay consistent)
+- **Safer shared-store deletes** — removing `~/.agents/skills/...` warns that other agents may share that path; delete plans dedupe paths across hosts
+
 ### Added
 
-- Inventory for additional agent hosts (gemini-cli, antigravity*, github-copilot, opencode, pi, amp, kimi-cli, replit, qwen-code, augment, continue, droid, kilo, qoder, roo, trae, codebuddy, grok, cline, warp, universal, devin)
+- Inventory roots for the hosts listed above (`gh skill` `agentHosts` / common install paths)
+- Project scan for `.cursor/skills` and `.codex/skills`
 
 ### Fixed
 
-- Cursor inventory/delete now includes `~/.agents/skills` and `~/.cursor/skills-cursor` (paths Cursor actually loads)
-- npx-sourced deletes always run `npx skills remove` after filesystem removal (lockfile / shared store cleanup)
-- Project scan also covers `.cursor/skills` and `.codex/skills`
+- Cursor user scan missed shared / managed skill trees Cursor loads at runtime
+- npx deletes previously skipped `npx skills remove` whenever inventory paths existed (and never passed `npx_available`)
 
 ## [0.2.0] - 2026-08-04
 

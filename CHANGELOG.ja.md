@@ -10,15 +10,22 @@
 
 ## [0.3.0] - 2026-08-04
 
+### ハイライト
+
+- **Cursor が見ているものを一覧できる** — `~/.agents/skills` と `~/.cursor/skills-cursor` をスキャン対象に追加。Cursor に出るのに skls に出なかったスキル（例: `brand`）も表示・削除できる
+- **27 エージェントホスト対応** — Cursor / Claude Code / Codex に加え、gemini-cli・antigravity*・github-copilot・opencode・pi・amp・kimi-cli・replit・qwen-code・augment・continue・droid・kilo・qoder・roo・trae・codebuddy・grok・cline・warp・universal・devin
+- **npx 削除の後始末** — npx 由来スキルはパス削除のあと必ず `npx skills remove` を実行（lockfile / 共有ストアの整合）
+- **共有ストア削除の注意** — `~/.agents/skills/...` 削除時に他エージェントへの影響を警告。複数ホストで同じパスは削除プランで重複排除
+
 ### 追加
 
-- 追加エージェントホストのインベントリ（gemini-cli, antigravity*, github-copilot, opencode, pi, amp, kimi-cli, replit, qwen-code, augment, continue, droid, kilo, qoder, roo, trae, codebuddy, grok, cline, warp, universal, devin）
+- 上記ホスト向けのインベントリルート（`gh skill` の `agentHosts` / 一般的なインストール先）
+- project スキャンに `.cursor/skills` と `.codex/skills`
 
 ### 修正
 
-- Cursor の一覧・削除対象に、実際に読まれる `~/.agents/skills` と `~/.cursor/skills-cursor` を含める
-- npx 由来の削除では、パス削除のあとに必ず `npx skills remove` も実行する（lockfile / 共有ストアの整合）
-- project スキャンに `.cursor/skills` と `.codex/skills` も含める
+- Cursor user スキャンが、実行時に読まれる共有 / 管理ツリーを見落としていた
+- インベントリにパスがあると `npx skills remove` を呼んでいなかった（`npx_available` も常に false だった）
 
 ## [0.2.0] - 2026-08-04
 
