@@ -26,12 +26,41 @@ impl std::fmt::Display for Scope {
     }
 }
 
+/// Agent hosts that can own skill directories.
+///
+/// String ids match `gh skill list` `agentHosts` / `npx skills -a` where possible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Agent {
     Cursor,
     ClaudeCode,
     Codex,
+    GeminiCli,
+    Antigravity,
+    AntigravityCli,
+    #[serde(rename = "antigravity2.0")]
+    Antigravity2,
+    GitHubCopilot,
+    OpenCode,
+    Pi,
+    Amp,
+    KimiCli,
+    Replit,
+    QwenCode,
+    Augment,
+    Continue,
+    /// Factory Droid (`gh` host: `droid`, path: `~/.factory/skills`)
+    Droid,
+    Kilo,
+    Qoder,
+    Roo,
+    Trae,
+    CodeBuddy,
+    Grok,
+    Cline,
+    Warp,
+    Universal,
+    Devin,
 }
 
 impl Agent {
@@ -40,10 +69,68 @@ impl Agent {
             Agent::Cursor => "cursor",
             Agent::ClaudeCode => "claude-code",
             Agent::Codex => "codex",
+            Agent::GeminiCli => "gemini-cli",
+            Agent::Antigravity => "antigravity",
+            Agent::AntigravityCli => "antigravity-cli",
+            Agent::Antigravity2 => "antigravity2.0",
+            Agent::GitHubCopilot => "github-copilot",
+            Agent::OpenCode => "opencode",
+            Agent::Pi => "pi",
+            Agent::Amp => "amp",
+            Agent::KimiCli => "kimi-cli",
+            Agent::Replit => "replit",
+            Agent::QwenCode => "qwen-code",
+            Agent::Augment => "augment",
+            Agent::Continue => "continue",
+            Agent::Droid => "droid",
+            Agent::Kilo => "kilo",
+            Agent::Qoder => "qoder",
+            Agent::Roo => "roo",
+            Agent::Trae => "trae",
+            Agent::CodeBuddy => "codebuddy",
+            Agent::Grok => "grok",
+            Agent::Cline => "cline",
+            Agent::Warp => "warp",
+            Agent::Universal => "universal",
+            Agent::Devin => "devin",
         }
     }
 
+    /// All known agents (inventory / filter order).
     pub fn all() -> &'static [Agent] {
+        &[
+            Agent::Cursor,
+            Agent::ClaudeCode,
+            Agent::Codex,
+            Agent::GeminiCli,
+            Agent::Antigravity,
+            Agent::AntigravityCli,
+            Agent::Antigravity2,
+            Agent::GitHubCopilot,
+            Agent::OpenCode,
+            Agent::Pi,
+            Agent::Amp,
+            Agent::KimiCli,
+            Agent::Replit,
+            Agent::QwenCode,
+            Agent::Augment,
+            Agent::Continue,
+            Agent::Droid,
+            Agent::Kilo,
+            Agent::Qoder,
+            Agent::Roo,
+            Agent::Trae,
+            Agent::CodeBuddy,
+            Agent::Grok,
+            Agent::Cline,
+            Agent::Warp,
+            Agent::Universal,
+            Agent::Devin,
+        ]
+    }
+
+    /// Default targets for add flow (common trio).
+    pub fn primary() -> &'static [Agent] {
         &[Agent::Cursor, Agent::ClaudeCode, Agent::Codex]
     }
 
@@ -52,6 +139,30 @@ impl Agent {
             "cursor" => Some(Agent::Cursor),
             "claude-code" | "claude" => Some(Agent::ClaudeCode),
             "codex" => Some(Agent::Codex),
+            "gemini-cli" | "gemini" => Some(Agent::GeminiCli),
+            "antigravity" => Some(Agent::Antigravity),
+            "antigravity-cli" => Some(Agent::AntigravityCli),
+            "antigravity2.0" | "antigravity2" => Some(Agent::Antigravity2),
+            "github-copilot" | "copilot" => Some(Agent::GitHubCopilot),
+            "opencode" => Some(Agent::OpenCode),
+            "pi" => Some(Agent::Pi),
+            "amp" => Some(Agent::Amp),
+            "kimi-cli" | "kimi" => Some(Agent::KimiCli),
+            "replit" => Some(Agent::Replit),
+            "qwen-code" | "qwen" => Some(Agent::QwenCode),
+            "augment" => Some(Agent::Augment),
+            "continue" => Some(Agent::Continue),
+            "droid" | "factory" => Some(Agent::Droid),
+            "kilo" | "kilocode" => Some(Agent::Kilo),
+            "qoder" => Some(Agent::Qoder),
+            "roo" => Some(Agent::Roo),
+            "trae" => Some(Agent::Trae),
+            "codebuddy" => Some(Agent::CodeBuddy),
+            "grok" => Some(Agent::Grok),
+            "cline" => Some(Agent::Cline),
+            "warp" => Some(Agent::Warp),
+            "universal" => Some(Agent::Universal),
+            "devin" => Some(Agent::Devin),
             _ => None,
         }
     }
@@ -152,11 +263,15 @@ impl SkillRecord {
     }
 
     pub fn agents_label(&self) -> String {
-        self.agents
-            .iter()
-            .map(|a| a.as_str())
-            .collect::<Vec<_>>()
-            .join(",")
+        if self.agents.is_empty() {
+            "-".into()
+        } else {
+            self.agents
+                .iter()
+                .map(|a| a.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        }
     }
 }
 
@@ -232,5 +347,30 @@ impl SkillFilters {
             }
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_gh_agent_host_aliases() {
+        assert_eq!(Agent::parse("github-copilot"), Some(Agent::GitHubCopilot));
+        assert_eq!(Agent::parse("copilot"), Some(Agent::GitHubCopilot));
+        assert_eq!(Agent::parse("qwen-code"), Some(Agent::QwenCode));
+        assert_eq!(Agent::parse("droid"), Some(Agent::Droid));
+        assert_eq!(Agent::parse("factory"), Some(Agent::Droid));
+        assert_eq!(Agent::parse("antigravity2.0"), Some(Agent::Antigravity2));
+        assert_eq!(Agent::parse("kilo"), Some(Agent::Kilo));
+        assert_eq!(Agent::parse("universal"), Some(Agent::Universal));
+    }
+
+    #[test]
+    fn all_agents_have_unique_ids() {
+        let mut ids: Vec<_> = Agent::all().iter().map(|a| a.as_str()).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), Agent::all().len());
     }
 }

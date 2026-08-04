@@ -228,7 +228,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Mode::Help | Mode::Message => " Enter / Esc / q close ".to_string(),
         Mode::Busy => " working — please wait … ".to_string(),
         Mode::Filter => {
-            " [p]/[u]/[a] scope  [1]/[2]/[3]/[0] agents  [c] clear  Esc back ".to_string()
+            " [p]/[u]/[a] scope  j/k Space agents  */0 all  [c] clear  Esc ".to_string()
         }
         Mode::Search => " type  Enter=apply  Esc=cancel ".to_string(),
         Mode::AddBackend => " [1] gh  [2] npx   Esc/q cancel ".to_string(),
@@ -349,7 +349,7 @@ fn draw_search_modal(frame: &mut Frame, app: &App) {
 }
 
 fn draw_filter_modal(frame: &mut Frame, app: &App) {
-    let agents = if app.filters.agents.is_empty() {
+    let agents_summary = if app.filters.agents.is_empty() {
         "all".into()
     } else {
         app.filters
@@ -359,21 +359,26 @@ fn draw_filter_modal(frame: &mut Frame, app: &App) {
             .collect::<Vec<_>>()
             .join(", ")
     };
+    let selected = if app.filters.agents.is_empty() {
+        Agent::all().to_vec()
+    } else {
+        app.filters.agents.clone()
+    };
+    let toggles = format_agent_toggles(&selected, Agent::all(), app.agent_focus);
     let body = format!(
         "Filter list\n\
          ────────────────────────\n\
          Current\n\
            scope    {}\n\
-           agents   {agents}\n\
+           agents   {agents_summary}\n\
          \n\
          Scope\n\
            [p]  project (this repo)\n\
            [u]  user (global)\n\
            [a]  all\n\
          \n\
-         Agents\n\
-           [1] cursor   [2] claude-code   [3] codex\n\
-           [0] all\n\
+         Agents  (j/k · Space · *=all · x=clear)\n\
+         {toggles}\n\
          \n\
          [c] clear filters\n\
          \n\
@@ -537,6 +542,7 @@ fn draw_add_agent_modal(frame: &mut Frame, app: &App) {
         AddBackend::GhSkill => 4,
         AddBackend::NpxSkills => 3,
     };
+    // Show all known hosts; default selection is Agent::primary().
     let toggles = format_agent_toggles(&app.add_agents, Agent::all(), app.agent_focus);
     let body = format!(
         "Add a skill  ·  {}\n\

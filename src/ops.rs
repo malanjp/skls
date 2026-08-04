@@ -29,6 +29,7 @@ pub struct DeletePlan {
     pub scope: Scope,
     pub agents: Vec<Agent>,
     pub paths: Vec<std::path::PathBuf>,
+    pub source: InstallSource,
     pub shared_warning: Option<String>,
 }
 
@@ -39,17 +40,26 @@ pub fn plan_delete(skill: &SkillRecord, agents: &[Agent]) -> DeletePlan {
         .filter(|l| agents.contains(&l.agent))
         .cloned()
         .collect();
-    let paths: Vec<_> = selected.iter().map(|l| l.path.clone()).collect();
+    let mut paths: Vec<_> = selected.iter().map(|l| l.path.clone()).collect();
+    paths.sort();
+    paths.dedup();
     let mut shared_warning = None;
     for loc in &selected {
-        if let Some(resolved) = &loc.resolved {
-            let s = resolved.to_string_lossy();
+        let candidates = [
+            Some(loc.path.as_path()),
+            loc.resolved.as_deref(),
+        ];
+        for path in candidates.into_iter().flatten() {
+            let s = path.to_string_lossy();
             if s.contains("/.agents/skills/") {
                 shared_warning = Some(format!(
-                    "Removing symlink target may affect other agents sharing {s}"
+                    "Removing shared store path may affect other agents: {s}"
                 ));
                 break;
             }
+        }
+        if shared_warning.is_some() {
+            break;
         }
     }
     DeletePlan {
@@ -57,6 +67,7 @@ pub fn plan_delete(skill: &SkillRecord, agents: &[Agent]) -> DeletePlan {
         scope: skill.scope,
         agents: agents.to_vec(),
         paths,
+        source: skill.source,
         shared_warning,
     }
 }
@@ -64,36 +75,48 @@ pub fn plan_delete(skill: &SkillRecord, agents: &[Agent]) -> DeletePlan {
 pub fn execute_delete(
     runner: &impl CommandRunner,
     plan: &DeletePlan,
-    prefer_npx: bool,
+    npx_available: bool,
 ) -> Result<Vec<String>> {
     let mut messages = Vec::new();
 
-    // Prefer filesystem paths from inventory. `npx skills remove` can hang on
-    // prompts/network and freezes the TUI event loop if awaited first.
-    if !plan.paths.is_empty() {
-        for path in &plan.paths {
-            match remove_skill_path(path) {
-                Ok(()) => messages.push(format!("removed {}", path.display())),
-                Err(err) => messages.push(format!("failed {}: {err}", path.display())),
-            }
+    // Remove inventory paths first so the TUI stays responsive even if the
+    // subsequent `npx skills remove` is slow.
+    for path in &plan.paths {
+        match remove_skill_path(path) {
+            Ok(()) => messages.push(format!("removed {}", path.display())),
+            Err(err) => messages.push(format!("failed {}: {err}", path.display())),
         }
-        return Ok(messages);
     }
 
-    if prefer_npx {
+    // For npx-sourced skills, always run `npx skills remove` too so the lockfile
+    // / shared store stay consistent (not only when inventory paths are empty).
+    if npx_available && plan.source == InstallSource::Npx {
         let cli = NpxSkillsCli { runner };
-        for agent in &plan.agents {
-            match cli.remove(&plan.skill_name, *agent, plan.scope) {
-                Ok(out) => {
-                    messages.push(format!(
-                        "npx skills remove {} @{}: {}",
-                        plan.skill_name,
-                        agent,
-                        out.stdout.trim()
-                    ));
-                }
-                Err(err) => {
-                    messages.push(format!("npx remove failed for {agent}: {err}"));
+        if plan.agents.is_empty() {
+            messages.push(format!(
+                "npx skills remove skipped for {}: no agents selected",
+                plan.skill_name
+            ));
+        } else {
+            for agent in &plan.agents {
+                match cli.remove(&plan.skill_name, *agent, plan.scope) {
+                    Ok(out) => {
+                        let detail = out.stdout.trim();
+                        if detail.is_empty() {
+                            messages.push(format!(
+                                "npx skills remove {} @{}",
+                                plan.skill_name, agent
+                            ));
+                        } else {
+                            messages.push(format!(
+                                "npx skills remove {} @{}: {detail}",
+                                plan.skill_name, agent
+                            ));
+                        }
+                    }
+                    Err(err) => {
+                        messages.push(format!("npx remove failed for {agent}: {err}"));
+                    }
                 }
             }
         }
@@ -378,6 +401,78 @@ mod tests {
         };
         let plan = plan_delete(&skill, &[Agent::Cursor]);
         assert!(plan.shared_warning.is_some());
+        assert_eq!(plan.source, InstallSource::Manual);
+    }
+
+    #[test]
+    fn execute_delete_calls_npx_even_when_paths_exist() {
+        use crate::adapters::command::{CommandOutput, FakeCommandRunner};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("find-skills");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "---\nname: find-skills\n---\n").unwrap();
+
+        let plan = DeletePlan {
+            skill_name: "find-skills".into(),
+            scope: Scope::User,
+            agents: vec![Agent::Cursor, Agent::ClaudeCode],
+            paths: vec![skill_dir.clone()],
+            source: InstallSource::Npx,
+            shared_warning: None,
+        };
+        let runner = FakeCommandRunner::with_responses(vec![
+            CommandOutput {
+                status: 0,
+                stdout: "ok".into(),
+                stderr: String::new(),
+            },
+            CommandOutput {
+                status: 0,
+                stdout: "ok".into(),
+                stderr: String::new(),
+            },
+        ]);
+
+        let msgs = execute_delete(&runner, &plan, true).unwrap();
+        assert!(msgs.iter().any(|m| m.contains("removed")));
+        assert!(!skill_dir.exists());
+
+        let calls = runner.calls();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].0, "npx");
+        assert!(calls[0].1.contains(&"remove".into()));
+        assert!(calls[0].1.contains(&"find-skills".into()));
+        assert!(calls[0].1.contains(&"-y".into()));
+        assert!(calls[0].1.contains(&"cursor".into()));
+        assert!(calls[1].1.contains(&"claude-code".into()));
+    }
+
+    #[test]
+    fn execute_delete_skips_npx_for_non_npx_source() {
+        use crate::adapters::command::{CommandOutput, FakeCommandRunner};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("manual");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "---\nname: manual\n---\n").unwrap();
+
+        let plan = DeletePlan {
+            skill_name: "manual".into(),
+            scope: Scope::User,
+            agents: vec![Agent::Cursor],
+            paths: vec![skill_dir],
+            source: InstallSource::Manual,
+            shared_warning: None,
+        };
+        let runner = FakeCommandRunner::with_responses(vec![CommandOutput {
+            status: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+        }]);
+
+        execute_delete(&runner, &plan, true).unwrap();
+        assert!(runner.calls().is_empty());
     }
 
     #[test]

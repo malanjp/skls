@@ -38,8 +38,12 @@ struct SkillMetadata {
 }
 
 /// Paths relative to project root / home for each agent.
+///
+/// Shared stores (e.g. `~/.agents/skills`) may appear under multiple agents;
+/// inventory merge collapses them onto one skill row with several locations.
 pub fn skill_roots(project_root: &Path, home: &Path) -> Vec<(Agent, Scope, PathBuf)> {
-    vec![
+    let mut roots = vec![
+        // Cursor
         (
             Agent::Cursor,
             Scope::Project,
@@ -47,26 +51,101 @@ pub fn skill_roots(project_root: &Path, home: &Path) -> Vec<(Agent, Scope, PathB
         ),
         (
             Agent::Cursor,
-            Scope::User,
-            home.join(".cursor/skills"),
+            Scope::Project,
+            project_root.join(".cursor/skills"),
         ),
+        (Agent::Cursor, Scope::User, home.join(".cursor/skills")),
+        (Agent::Cursor, Scope::User, home.join(".agents/skills")),
+        (
+            Agent::Cursor,
+            Scope::User,
+            home.join(".cursor/skills-cursor"),
+        ),
+        // Claude Code
         (
             Agent::ClaudeCode,
             Scope::Project,
             project_root.join(".claude/skills"),
         ),
-        (
-            Agent::ClaudeCode,
-            Scope::User,
-            home.join(".claude/skills"),
-        ),
+        (Agent::ClaudeCode, Scope::User, home.join(".claude/skills")),
+        // Codex
         (
             Agent::Codex,
             Scope::Project,
             project_root.join(".agents/skills"),
         ),
+        (
+            Agent::Codex,
+            Scope::Project,
+            project_root.join(".codex/skills"),
+        ),
         (Agent::Codex, Scope::User, home.join(".codex/skills")),
-    ]
+        // Gemini family
+        (Agent::GeminiCli, Scope::User, home.join(".gemini/skills")),
+        (
+            Agent::Antigravity,
+            Scope::User,
+            home.join(".gemini/antigravity/skills"),
+        ),
+        (
+            Agent::AntigravityCli,
+            Scope::User,
+            home.join(".gemini/antigravity-cli/skills"),
+        ),
+        (
+            Agent::Antigravity2,
+            Scope::User,
+            home.join(".gemini/config/skills"),
+        ),
+        // Other hosts (paths aligned with `gh skill list`)
+        (
+            Agent::GitHubCopilot,
+            Scope::User,
+            home.join(".copilot/skills"),
+        ),
+        (
+            Agent::OpenCode,
+            Scope::User,
+            home.join(".config/opencode/skills"),
+        ),
+        (Agent::Pi, Scope::User, home.join(".pi/agent/skills")),
+        (Agent::Amp, Scope::User, home.join(".config/agents/skills")),
+        (
+            Agent::KimiCli,
+            Scope::User,
+            home.join(".config/agents/skills"),
+        ),
+        (
+            Agent::Replit,
+            Scope::User,
+            home.join(".config/agents/skills"),
+        ),
+        (Agent::QwenCode, Scope::User, home.join(".qwen/skills")),
+        (Agent::Augment, Scope::User, home.join(".augment/skills")),
+        (Agent::Continue, Scope::User, home.join(".continue/skills")),
+        (Agent::Droid, Scope::User, home.join(".factory/skills")),
+        (Agent::Kilo, Scope::User, home.join(".kilocode/skills")),
+        (Agent::Qoder, Scope::User, home.join(".qoder/skills")),
+        (Agent::Roo, Scope::User, home.join(".roo/skills")),
+        (Agent::Trae, Scope::User, home.join(".trae/skills")),
+        (Agent::CodeBuddy, Scope::User, home.join(".codebuddy/skills")),
+        (Agent::Grok, Scope::User, home.join(".grok/skills")),
+        (Agent::Warp, Scope::User, home.join(".warp/skills")),
+        (Agent::Devin, Scope::User, home.join(".config/devin/skills")),
+        // Shared `~/.agents/skills` also attributed by gh to these hosts
+        (Agent::Cline, Scope::User, home.join(".agents/skills")),
+        (Agent::Warp, Scope::User, home.join(".agents/skills")),
+        (Agent::Universal, Scope::User, home.join(".agents/skills")),
+    ];
+
+    // Stable order for tests / debugging.
+    roots.sort_by(|a, b| {
+        a.0.as_str()
+            .cmp(b.0.as_str())
+            .then(a.1.as_str().cmp(b.1.as_str()))
+            .then(a.2.cmp(&b.2))
+    });
+    roots
 }
 
 pub fn parse_skill_md(content: &str) -> Result<(String, String, Option<String>, Option<String>, bool)> {
@@ -383,5 +462,81 @@ metadata:
             beta.source_url.as_deref(),
             Some("https://example.com/beta")
         );
+    }
+
+    #[test]
+    fn scan_cursor_shared_and_managed_roots() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("proj");
+        let home = tmp.path().join("home");
+        fs::create_dir_all(project.join(".git")).unwrap();
+
+        fs::create_dir_all(home.join(".agents/skills/shared-only")).unwrap();
+        fs::write(
+            home.join(".agents/skills/shared-only/SKILL.md"),
+            "---\nname: shared-only\ndescription: From agents store\n---\n",
+        )
+        .unwrap();
+
+        fs::create_dir_all(home.join(".cursor/skills-cursor/managed")).unwrap();
+        fs::write(
+            home.join(".cursor/skills-cursor/managed/SKILL.md"),
+            "---\nname: managed\ndescription: Cursor managed\n---\n",
+        )
+        .unwrap();
+
+        let (found, _warnings) = scan_skills(&project, &home).unwrap();
+        let shared: Vec<_> = found.iter().filter(|s| s.name == "shared-only").collect();
+        assert!(
+            shared.len() >= 3,
+            "shared store should be attributed to cursor/cline/warp/universal"
+        );
+        assert!(shared.iter().any(|s| s.location.agent == Agent::Cursor));
+        assert!(shared.iter().any(|s| s.location.agent == Agent::Universal));
+        assert!(shared
+            .iter()
+            .all(|s| s.location.path.ends_with(".agents/skills/shared-only")));
+
+        let managed = found
+            .iter()
+            .find(|s| s.name == "managed")
+            .expect("skills-cursor skill");
+        assert_eq!(managed.location.agent, Agent::Cursor);
+        assert!(managed
+            .location
+            .path
+            .ends_with(".cursor/skills-cursor/managed"));
+    }
+
+    #[test]
+    fn skill_roots_include_cursor_extra_user_paths() {
+        let roots = skill_roots(Path::new("/proj"), Path::new("/home"));
+        let cursor_user: Vec<_> = roots
+            .iter()
+            .filter(|(a, s, _)| *a == Agent::Cursor && *s == Scope::User)
+            .map(|(_, _, p)| p.clone())
+            .collect();
+        assert!(cursor_user.contains(&PathBuf::from("/home/.cursor/skills")));
+        assert!(cursor_user.contains(&PathBuf::from("/home/.agents/skills")));
+        assert!(cursor_user.contains(&PathBuf::from("/home/.cursor/skills-cursor")));
+    }
+
+    #[test]
+    fn skill_roots_cover_extended_agents() {
+        let roots = skill_roots(Path::new("/proj"), Path::new("/home"));
+        let has = |agent: Agent, path: &str| {
+            roots
+                .iter()
+                .any(|(a, _, p)| *a == agent && p == Path::new(path))
+        };
+        assert!(has(Agent::GeminiCli, "/home/.gemini/skills"));
+        assert!(has(Agent::GitHubCopilot, "/home/.copilot/skills"));
+        assert!(has(Agent::OpenCode, "/home/.config/opencode/skills"));
+        assert!(has(Agent::Pi, "/home/.pi/agent/skills"));
+        assert!(has(Agent::QwenCode, "/home/.qwen/skills"));
+        assert!(has(Agent::Droid, "/home/.factory/skills"));
+        assert!(has(Agent::Devin, "/home/.config/devin/skills"));
+        assert!(has(Agent::Universal, "/home/.agents/skills"));
+        assert!(has(Agent::Cursor, "/proj/.cursor/skills"));
     }
 }

@@ -144,7 +144,7 @@ impl App {
             add_result_idx: 0,
             add_package: String::new(),
             add_skill: String::new(),
-            add_agents: Agent::all().to_vec(),
+            add_agents: Agent::primary().to_vec(),
             add_scope: Scope::User,
             delete_skills: Vec::new(),
             delete_agents: Vec::new(),
@@ -545,19 +545,38 @@ impl App {
                 self.filters.scope = None;
                 self.recompute_view();
             }
-            KeyCode::Char('1') => {
-                self.filters.agents = vec![Agent::Cursor];
+            KeyCode::Char('0') | KeyCode::Char('*') => {
+                // Empty agents filter = show all.
+                self.filters.agents.clear();
+                self.agent_focus = 0;
                 self.recompute_view();
             }
-            KeyCode::Char('2') => {
-                self.filters.agents = vec![Agent::ClaudeCode];
+            KeyCode::Char('j') | KeyCode::Down => {
+                move_agent_focus(&mut self.agent_focus, Agent::all(), true);
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                move_agent_focus(&mut self.agent_focus, Agent::all(), false);
+            }
+            KeyCode::Char(' ') => {
+                let available = Agent::all();
+                clamp_agent_focus(&mut self.agent_focus, available);
+                let Some(agent) = available.get(self.agent_focus).copied() else {
+                    return;
+                };
+                if self.filters.agents.is_empty() {
+                    // Narrow from "all" to the focused agent.
+                    self.filters.agents = vec![agent];
+                } else {
+                    toggle_agent(&mut self.filters.agents, agent);
+                    if self.filters.agents.is_empty()
+                        || self.filters.agents.len() == available.len()
+                    {
+                        self.filters.agents.clear();
+                    }
+                }
                 self.recompute_view();
             }
-            KeyCode::Char('3') => {
-                self.filters.agents = vec![Agent::Codex];
-                self.recompute_view();
-            }
-            KeyCode::Char('0') => {
+            KeyCode::Char('x') => {
                 self.filters.agents.clear();
                 self.recompute_view();
             }
@@ -575,13 +594,13 @@ impl App {
         self.add_results.clear();
         self.add_package.clear();
         self.add_skill.clear();
-        self.add_agents = Agent::all().to_vec();
+        self.add_agents = Agent::primary().to_vec();
         self.mode = Mode::List;
         self.status = "add cancelled".into();
     }
 
     fn enter_add_agent(&mut self) {
-        self.add_agents = Agent::all().to_vec();
+        self.add_agents = Agent::primary().to_vec();
         self.agent_focus = 0;
         self.mode = Mode::AddAgent;
     }
@@ -715,7 +734,7 @@ impl App {
         if handle_agent_list_keys(
             key,
             &mut self.add_agents,
-            Agent::all(),
+            Agent::all(), // allow installing to any known host
             &mut self.agent_focus,
         ) {
             return;

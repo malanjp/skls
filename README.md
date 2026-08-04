@@ -144,11 +144,21 @@ Suggestion priority:
 
 | Agent | project | user |
 |-------|---------|------|
-| cursor | `.agents/skills/` | `~/.cursor/skills/` |
+| cursor | `.agents/skills/` · `.cursor/skills/` | `~/.cursor/skills/` · `~/.agents/skills/` · `~/.cursor/skills-cursor/` |
 | claude-code | `.claude/skills/` | `~/.claude/skills/` |
-| codex | `.agents/skills/` | `~/.codex/skills/` |
+| codex | `.agents/skills/` · `.codex/skills/` | `~/.codex/skills/` |
+| gemini-cli | — | `~/.gemini/skills/` |
+| antigravity / antigravity-cli / antigravity2.0 | — | `~/.gemini/antigravity{,-cli}/skills/` · `~/.gemini/config/skills/` |
+| github-copilot | — | `~/.copilot/skills/` |
+| opencode | — | `~/.config/opencode/skills/` |
+| pi | — | `~/.pi/agent/skills/` |
+| amp / kimi-cli / replit | — | `~/.config/agents/skills/` |
+| qwen-code | — | `~/.qwen/skills/` |
+| augment / continue / droid / kilo / qoder / roo / trae / codebuddy | — | `~/.<host>/skills/` (droid → `~/.factory/skills/`) |
+| grok / warp / devin | — | `~/.grok/skills/` · `~/.warp/skills/` · `~/.config/devin/skills/` |
+| cline / warp / universal | — | also linked to shared `~/.agents/skills/` |
 
-The same skill on multiple hosts is merged into one row.
+The same skill on multiple hosts is merged into one row. Add flow defaults to cursor / claude-code / codex (`*` selects every host).
 
 Extra metadata:
 

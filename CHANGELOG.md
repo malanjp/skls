@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-04
+
+### Added
+
+- Inventory for additional agent hosts (gemini-cli, antigravity*, github-copilot, opencode, pi, amp, kimi-cli, replit, qwen-code, augment, continue, droid, kilo, qoder, roo, trae, codebuddy, grok, cline, warp, universal, devin)
+
+### Fixed
+
+- Cursor inventory/delete now includes `~/.agents/skills` and `~/.cursor/skills-cursor` (paths Cursor actually loads)
+- npx-sourced deletes always run `npx skills remove` after filesystem removal (lockfile / shared store cleanup)
+- Project scan also covers `.cursor/skills` and `.codex/skills`
+
 ## [0.2.0] - 2026-08-04
 
 ### Changed
@@ -38,6 +50,7 @@ Initial release of **skls** (*skills list*).
 - Log matching is heuristic, not a precise skill-execution count
 - Listing and metrics work without `gh` / `npx`; only CLI-dependent actions are disabled
 
-[Unreleased]: https://github.com/malanjp/skls/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/malanjp/skls/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/malanjp/skls/releases/tag/v0.3.0
 [0.2.0]: https://github.com/malanjp/skls/releases/tag/v0.2.0
 [0.1.0]: https://github.com/malanjp/skls/releases/tag/v0.1.0

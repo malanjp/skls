@@ -8,6 +8,18 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-04
+
+### 追加
+
+- 追加エージェントホストのインベントリ（gemini-cli, antigravity*, github-copilot, opencode, pi, amp, kimi-cli, replit, qwen-code, augment, continue, droid, kilo, qoder, roo, trae, codebuddy, grok, cline, warp, universal, devin）
+
+### 修正
+
+- Cursor の一覧・削除対象に、実際に読まれる `~/.agents/skills` と `~/.cursor/skills-cursor` を含める
+- npx 由来の削除では、パス削除のあとに必ず `npx skills remove` も実行する（lockfile / 共有ストアの整合）
+- project スキャンに `.cursor/skills` と `.codex/skills` も含める
+
 ## [0.2.0] - 2026-08-04
 
 ### 変更
@@ -37,6 +49,7 @@
 - ログ照合はヒューリスティックであり、厳密なスキル実行回数ではない
 - `gh` / `npx` がなくても一覧と指標は動く。CLI 依存の操作だけ無効になる
 
-[Unreleased]: https://github.com/malanjp/skls/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/malanjp/skls/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/malanjp/skls/releases/tag/v0.3.0
 [0.2.0]: https://github.com/malanjp/skls/releases/tag/v0.2.0
 [0.1.0]: https://github.com/malanjp/skls/releases/tag/v0.1.0

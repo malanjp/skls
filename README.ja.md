@@ -144,11 +144,21 @@ skls --dump-json                     # TUI なしでインベントリを JSON �
 
 | Agent | project | user |
 |-------|---------|------|
-| cursor | `.agents/skills/` | `~/.cursor/skills/` |
+| cursor | `.agents/skills/` · `.cursor/skills/` | `~/.cursor/skills/` · `~/.agents/skills/` · `~/.cursor/skills-cursor/` |
 | claude-code | `.claude/skills/` | `~/.claude/skills/` |
-| codex | `.agents/skills/` | `~/.codex/skills/` |
+| codex | `.agents/skills/` · `.codex/skills/` | `~/.codex/skills/` |
+| gemini-cli | — | `~/.gemini/skills/` |
+| antigravity / antigravity-cli / antigravity2.0 | — | `~/.gemini/antigravity{,-cli}/skills/` · `~/.gemini/config/skills/` |
+| github-copilot | — | `~/.copilot/skills/` |
+| opencode | — | `~/.config/opencode/skills/` |
+| pi | — | `~/.pi/agent/skills/` |
+| amp / kimi-cli / replit | — | `~/.config/agents/skills/` |
+| qwen-code | — | `~/.qwen/skills/` |
+| augment / continue / droid / kilo / qoder / roo / trae / codebuddy | — | `~/.<host>/skills/`（droid は `~/.factory/skills/`） |
+| grok / warp / devin | — | `~/.grok/skills/` · `~/.warp/skills/` · `~/.config/devin/skills/` |
+| cline / warp / universal | — | 共有 `~/.agents/skills/` にも紐づけ |
 
-同一スキルが複数ホストにある場合は 1 行に集約する。
+同一スキルが複数ホストにある場合は 1 行に集約する。追加フローの初期選択は cursor / claude-code / codex（`*` で全ホスト）。
 
 追加のメタデータ:
 

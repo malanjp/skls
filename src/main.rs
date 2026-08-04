@@ -130,7 +130,7 @@ fn run_pending_action(
             let mut msgs = Vec::new();
             let mut errors = Vec::new();
             for plan in &plans {
-                match execute_delete(&runner, plan, false) {
+                match execute_delete(&runner, plan, app.npx_available) {
                     Ok(m) => msgs.extend(m),
                     Err(err) => errors.push(format!("{}: {err}", plan.skill_name)),
                 }
