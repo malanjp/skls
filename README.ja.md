@@ -198,8 +198,6 @@ cargo test --lib
 cargo run --release -- --dump-json
 ```
 
-設計メモ: [docs/superpowers/specs/2026-08-04-skls-design.md](docs/superpowers/specs/2026-08-04-skls-design.md)
-
 ## Changelog
 
 [CHANGELOG.md](CHANGELOG.md)（[日本語](CHANGELOG.ja.md)）を参照。
