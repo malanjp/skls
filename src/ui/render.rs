@@ -1,4 +1,4 @@
-//! ratatui rendering for skillui.
+//! ratatui rendering for skls.
 
 use crate::app::{App, Mode};
 use crate::ops::AddBackend;
@@ -73,7 +73,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         String::new()
     };
     let title = format!(
-        " skillui  scope:{}  agents:{}  sort:{}  window:{}d  sample:{}{selected} ",
+        " skls  scope:{}  agents:{}  sort:{}  window:{}d  sample:{}{selected} ",
         scope_label(app.filters.scope),
         agents,
         app.sort_key.as_str(),

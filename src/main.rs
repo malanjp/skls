@@ -7,17 +7,17 @@ use crossterm::terminal::{
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
-use skillui::adapters::command::SystemCommandRunner;
-use skillui::analytics::AnalyzeLimits;
-use skillui::app::{App, PendingAction};
-use skillui::ops::{execute_delete, execute_update};
-use skillui::ui::draw;
+use skls::adapters::command::SystemCommandRunner;
+use skls::analytics::AnalyzeLimits;
+use skls::app::{App, PendingAction};
+use skls::ops::{execute_delete, execute_update};
+use skls::ui::draw;
 use std::io::{self, stdout};
 use std::path::PathBuf;
 use std::time::Duration;
 
 #[derive(Debug, Parser)]
-#[command(name = "skillui", about = "TUI for managing agent skills")]
+#[command(name = "skls", about = "TUI for listing and managing agent skills")]
 struct Cli {
     /// Project root for project-scope skills (default: cwd)
     #[arg(long)]

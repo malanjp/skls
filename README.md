@@ -1,8 +1,8 @@
-# skillui
+# skls
 
 [English](README.md) | [日本語](README.ja.md)
 
-A TUI for managing agent skills across Cursor, Claude Code, and Codex.
+**skls** (*skills list*) — a TUI for managing agent skills across Cursor, Claude Code, and Codex.
 
 See which skills are installed, where they apply, and whether they are used — then add, delete, or update them from the same screen.
 
@@ -26,8 +26,8 @@ Listing and activation metrics work without `gh` / `npx`. Only operations that n
 ## Install / run
 
 ```bash
-git clone https://github.com/malanjp/skillui.git
-cd skillui
+git clone https://github.com/malanjp/skls.git
+cd skls
 cargo run --release
 ```
 
@@ -35,19 +35,19 @@ Install onto your `PATH`:
 
 ```bash
 cargo install --path .
-skillui
+skls
 ```
 
 ### CLI options
 
 ```bash
-skillui                              # use cwd as project root
-skillui --project-root /path/to/repo
-skillui --window-days 30             # activation window (days)
-skillui --max-sessions 200           # sessions read per agent (default 80)
-skillui --max-bytes 1048576          # max bytes per session file (default 256KiB)
-skillui --full-scan                  # no session / byte caps (slow on large log trees)
-skillui --dump-json                  # print inventory as JSON (no TUI)
+skls                                 # use cwd as project root
+skls --project-root /path/to/repo
+skls --window-days 30                # activation window (days)
+skls --max-sessions 200              # sessions read per agent (default 80)
+skls --max-bytes 1048576             # max bytes per session file (default 256KiB)
+skls --full-scan                     # no session / byte caps (slow on large log trees)
+skls --dump-json                     # print inventory as JSON (no TUI)
 ```
 
 On startup the skill list appears first, then activation is sampled. With defaults, the list usually shows within about 1–2 seconds.
@@ -55,7 +55,7 @@ On startup the skill list appears first, then activation is sampled. With defaul
 ## Screen
 
 ```
-┌ skillui  scope:all  agents:all  sort:delete_score  window:30d  sample:≤80sess/256KiB ─┐
+┌ skls  scope:all  agents:all  sort:delete_score  window:30d  sample:≤80sess/256KiB ─┐
 │ 170 skills | gh:ok npx:ok | activations ready | sampled (-N older) | /path/to/project   │
 ├──────────────────────────────────┬──────────────────────────────────────────────────────┤
 │ NAME              SCOPE RATE SCORE│ detail                                              │
@@ -190,7 +190,7 @@ cargo test --lib
 cargo run --release -- --dump-json
 ```
 
-Design notes: [docs/superpowers/specs/2026-08-04-skillui-design.md](docs/superpowers/specs/2026-08-04-skillui-design.md)
+Design notes: [docs/superpowers/specs/2026-08-04-skls-design.md](docs/superpowers/specs/2026-08-04-skls-design.md)
 
 ## License
 

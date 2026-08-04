@@ -1,8 +1,8 @@
-# skillui
+# skls
 
 [English](README.md) | [日本語](README.ja.md)
 
-Cursor / Claude Code / Codex のエージェントスキルを横断管理する TUI。
+**skls**（*skills list*）— Cursor / Claude Code / Codex のエージェントスキルを横断管理する TUI。
 
 どのスキルが入っているか、どこに効いているか、使われているかを一覧で把握し、追加・削除・更新まで同じ画面で行う。
 
@@ -26,8 +26,8 @@ Cursor / Claude Code / Codex のエージェントスキルを横断管理する
 ## インストール / 起動
 
 ```bash
-git clone https://github.com/malanjp/skillui.git
-cd skillui
+git clone https://github.com/malanjp/skls.git
+cd skls
 cargo run --release
 ```
 
@@ -35,19 +35,19 @@ cargo run --release
 
 ```bash
 cargo install --path .
-skillui
+skls
 ```
 
 ### CLI オプション
 
 ```bash
-skillui                              # cwd を project root として起動
-skillui --project-root /path/to/repo
-skillui --window-days 30             # 発動率の集計窓（日）
-skillui --max-sessions 200           # エージェントあたり読むセッション数（既定 80）
-skillui --max-bytes 1048576          # セッションファイルあたりの読込上限バイト（既定 256KiB）
-skillui --full-scan                  # セッション / バイト上限なし（大きいログツリーでは遅い）
-skillui --dump-json                  # TUI なしでインベントリを JSON 出力
+skls                                 # cwd を project root として起動
+skls --project-root /path/to/repo
+skls --window-days 30                # 発動率の集計窓（日）
+skls --max-sessions 200              # エージェントあたり読むセッション数（既定 80）
+skls --max-bytes 1048576             # セッションファイルあたりの読込上限バイト（既定 256KiB）
+skls --full-scan                     # セッション / バイト上限なし（大きいログツリーでは遅い）
+skls --dump-json                     # TUI なしでインベントリを JSON 出力
 ```
 
 起動時はスキル一覧を先に出し、その後に発動率をサンプリング解析する。既定上限なら通常 1〜2 秒程度で一覧まで到達する。
@@ -55,7 +55,7 @@ skillui --dump-json                  # TUI なしでインベントリを JSON �
 ## 画面
 
 ```
-┌ skillui  scope:all  agents:all  sort:delete_score  window:30d  sample:≤80sess/256KiB ─┐
+┌ skls  scope:all  agents:all  sort:delete_score  window:30d  sample:≤80sess/256KiB ─┐
 │ 170 skills | gh:ok npx:ok | activations ready | sampled (-N older) | /path/to/project   │
 ├──────────────────────────────────┬──────────────────────────────────────────────────────┤
 │ NAME              SCOPE RATE SCORE│ detail                                              │
@@ -190,7 +190,7 @@ cargo test --lib
 cargo run --release -- --dump-json
 ```
 
-設計メモ: [docs/superpowers/specs/2026-08-04-skillui-design.md](docs/superpowers/specs/2026-08-04-skillui-design.md)
+設計メモ: [docs/superpowers/specs/2026-08-04-skls-design.md](docs/superpowers/specs/2026-08-04-skls-design.md)
 
 ## ライセンス
 

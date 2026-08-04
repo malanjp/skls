@@ -1,4 +1,4 @@
-# skillui Design Spec
+# skls Design Spec
 
 Date: 2026-08-04
 
