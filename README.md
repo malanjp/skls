@@ -192,6 +192,10 @@ cargo run --release -- --dump-json
 
 Design notes: [docs/superpowers/specs/2026-08-04-skls-design.md](docs/superpowers/specs/2026-08-04-skls-design.md)
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) ([日本語](CHANGELOG.ja.md)).
+
 ## License
 
-TBD (unset at repository creation time).
+[MIT](LICENSE)
