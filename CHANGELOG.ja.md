@@ -8,6 +8,16 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-04
+
+### 追加
+
+- コーディングエージェント向け `AGENTS.md`
+
+### 変更
+
+- `Cargo.lock` を更新（間接依存）
+
 ## [0.3.0] - 2026-08-04
 
 ### ハイライト
@@ -56,7 +66,8 @@
 - ログ照合はヒューリスティックであり、厳密なスキル実行回数ではない
 - `gh` / `npx` がなくても一覧と指標は動く。CLI 依存の操作だけ無効になる
 
-[Unreleased]: https://github.com/malanjp/skls/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/malanjp/skls/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/malanjp/skls/releases/tag/v0.3.1
 [0.3.0]: https://github.com/malanjp/skls/releases/tag/v0.3.0
 [0.2.0]: https://github.com/malanjp/skls/releases/tag/v0.2.0
 [0.1.0]: https://github.com/malanjp/skls/releases/tag/v0.1.0
