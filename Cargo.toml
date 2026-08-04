@@ -1,0 +1,18 @@
+[package]
+name = "skillui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+chrono = "0.4.45"
+clap = { version = "4.6.5", features = ["derive"] }
+crossterm = "0.29.0"
+ratatui = "0.30.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+serde_yaml = "0.9.34"
+thiserror = "2.0.19"
+
+[dev-dependencies]
+tempfile = "3.27.0"
