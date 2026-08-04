@@ -3,8 +3,14 @@ name = "skls"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/malanjp/skls"
 description = "TUI for listing and managing agent skills across Cursor, Claude Code, and Codex"
+repository = "https://github.com/malanjp/skls"
+homepage = "https://github.com/malanjp/skls"
+documentation = "https://docs.rs/skls"
+readme = "README.md"
+keywords = ["tui", "skills", "agents", "cli", "ratatui"]
+categories = ["command-line-utilities", "development-tools"]
+authors = ["malan"]
 
 [dependencies]
 anyhow = "1.0.104"

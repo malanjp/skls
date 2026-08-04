@@ -25,17 +25,20 @@
 
 ## インストール / 起動
 
+[crates.io](https://crates.io/crates/skls) から:
+
+```bash
+cargo install skls
+skls
+```
+
+ソースから:
+
 ```bash
 git clone https://github.com/malanjp/skls.git
 cd skls
-cargo run --release
-```
-
-パスに入れる場合:
-
-```bash
 cargo install --path .
-skls
+# または: cargo run --release
 ```
 
 ### CLI オプション

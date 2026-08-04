@@ -25,17 +25,20 @@ Listing and activation metrics work without `gh` / `npx`. Only operations that n
 
 ## Install / run
 
+From [crates.io](https://crates.io/crates/skls):
+
+```bash
+cargo install skls
+skls
+```
+
+From source:
+
 ```bash
 git clone https://github.com/malanjp/skls.git
 cd skls
-cargo run --release
-```
-
-Install onto your `PATH`:
-
-```bash
 cargo install --path .
-skls
+# or: cargo run --release
 ```
 
 ### CLI options
