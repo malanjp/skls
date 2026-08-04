@@ -97,8 +97,10 @@ skillui --dump-json                  # TUI なしでインベントリを JSON �
 
 ### 追加（`a`）
 
+ダイアログで順に進む。`Esc` で前のステップ、`q` で中止。
+
 1. backend 選択: `1`/`g` = `gh skill`、`2`/`n` = `npx skills`
-2. クエリ入力（gh: 検索語、npx: `owner/repo` または `owner/repo@skill`）
+2. ソース入力（gh: 検索語、npx: `owner/repo` または `owner/repo@skill`）
 3. 結果選択（gh の場合）
 4. エージェント（`1`/`2`/`3`）→ スコープ（`p`/`u`）で実行
 
@@ -154,8 +156,26 @@ skillui --dump-json                  # TUI なしでインベントリを JSON �
 | Codex | `~/.codex/sessions/**/rollout-*.jsonl` |
 
 - `activation_rate` = `hits / sessions_total`（セッション 0 のときは N/A）
-- `delete_score` が高いほど削除候補（低発動・長期未使用・多ホスト・provenance なしなどを加点）
-- 詳細のラベル: `keep` / `review` / `consider delete`
+- `delete_score` が高いほど削除候補（下記の加点の合計）
+- 詳細のラベル: `keep`（35 未満） / `review`（35–59） / `consider delete`（60 以上）
+
+`delete_score` の加点（実装: `src/analytics/score.rs`）:
+
+| 要因 | 条件 | 加点 |
+|------|------|------|
+| 発動率 | セッションなし / 不明 | +25 |
+| | 0% | +40 |
+| | 5% 未満 | +30 |
+| | 15% 未満 | +15 |
+| | 30% 未満 | +5 |
+| 最終ヒット | なし | +20 |
+| | 60 日超 | +25 |
+| | 30 日超 | +15 |
+| | 14 日超 | +8 |
+| ホスト数 | 3 エージェント以上 | +10 |
+| | 2 エージェント | +5 |
+| provenance | `manual` かつ `source_url` なし | +5 |
+| ヒット | `hits == 0` | +10 |
 
 ログ照合はヒューリスティックであり、厳密な「スキル実行回数」ではない。削除前の判断材料として使う。
 

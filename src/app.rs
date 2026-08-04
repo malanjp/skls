@@ -552,15 +552,33 @@ impl App {
         }
     }
 
+    fn cancel_add(&mut self) {
+        self.input.clear();
+        self.add_query.clear();
+        self.add_results.clear();
+        self.add_package.clear();
+        self.add_skill.clear();
+        self.mode = Mode::List;
+        self.status = "add cancelled".into();
+    }
+
     fn handle_add_backend_key(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Esc => self.mode = Mode::List,
+            KeyCode::Esc | KeyCode::Char('q') => self.cancel_add(),
             KeyCode::Char('1') | KeyCode::Char('g') => {
+                if !self.gh_available {
+                    self.status = "gh not available".into();
+                    return;
+                }
                 self.add_backend = AddBackend::GhSkill;
                 self.mode = Mode::AddQuery;
                 self.input.clear();
             }
             KeyCode::Char('2') | KeyCode::Char('n') => {
+                if !self.npx_available {
+                    self.status = "npx not available".into();
+                    return;
+                }
                 self.add_backend = AddBackend::NpxSkills;
                 self.mode = Mode::AddQuery;
                 self.input.clear();
@@ -571,8 +589,16 @@ impl App {
 
     fn handle_add_query_key(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
-            KeyCode::Esc => self.mode = Mode::List,
+            KeyCode::Char('q') if self.input.is_empty() => self.cancel_add(),
+            KeyCode::Esc => {
+                self.input.clear();
+                self.mode = Mode::AddBackend;
+            }
             KeyCode::Enter => {
+                if self.input.trim().is_empty() {
+                    self.status = "enter a source / query first".into();
+                    return Ok(());
+                }
                 self.add_query = self.input.clone();
                 self.run_add_search()?;
             }
@@ -620,9 +646,7 @@ impl App {
                     self.add_skill = String::new();
                 }
                 self.mode = Mode::AddAgent;
-                self.status =
-                    "npx: enter package as owner/repo or owner/repo@skill, then pick agent"
-                        .into();
+                self.status = format!("追加中: {} → エージェント選択", self.add_package);
             }
         }
         Ok(())
@@ -630,7 +654,11 @@ impl App {
 
     fn handle_add_results_key(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Esc => self.mode = Mode::List,
+            KeyCode::Char('q') => self.cancel_add(),
+            KeyCode::Esc => {
+                self.mode = Mode::AddQuery;
+                self.input = self.add_query.clone();
+            }
             KeyCode::Down | KeyCode::Char('j') => {
                 if !self.add_results.is_empty() {
                     self.add_result_idx =
@@ -661,7 +689,20 @@ impl App {
 
     fn handle_add_agent_key(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Esc => self.mode = Mode::List,
+            KeyCode::Char('q') => self.cancel_add(),
+            KeyCode::Esc => {
+                // gh flow has a results step; npx goes straight from query.
+                self.mode = if self.add_backend == AddBackend::GhSkill
+                    && !self.add_results.is_empty()
+                {
+                    Mode::AddResults
+                } else {
+                    Mode::AddQuery
+                };
+                if self.mode == Mode::AddQuery {
+                    self.input = self.add_query.clone();
+                }
+            }
             KeyCode::Char('1') => {
                 self.add_agent = Agent::Cursor;
                 self.mode = Mode::AddScope;
@@ -680,7 +721,8 @@ impl App {
 
     fn handle_add_scope_key(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
-            KeyCode::Esc => self.mode = Mode::List,
+            KeyCode::Char('q') => self.cancel_add(),
+            KeyCode::Esc => self.mode = Mode::AddAgent,
             KeyCode::Char('p') => {
                 self.add_scope = Scope::Project;
                 self.finish_add()?;
