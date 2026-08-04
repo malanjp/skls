@@ -1,27 +1,29 @@
 # skillui
 
-Cursor / Claude Code / Codex のエージェントスキルを横断管理する TUI。
+[English](README.md) | [日本語](README.ja.md)
 
-どのスキルが入っているか、どこに効いているか、使われているかを一覧で把握し、追加・削除・更新まで同じ画面で行う。
+A TUI for managing agent skills across Cursor, Claude Code, and Codex.
 
-## できること
+See which skills are installed, where they apply, and whether they are used — then add, delete, or update them from the same screen.
 
-- **一覧**: project / user スコープとエージェントでフィルタ。複数選択して一括操作できる
-- **指標**: 会話ログから発動率を算出し、削除判断スコア（`delete_score`）を表示する
-- **追加**: 都度 `gh skill` か `npx skills` を選んでインストールする
-- **削除**: インベントリ上のパスを優先して削除する（確認必須）。共有実体への symlink は警告する
-- **更新**: `gh skill` / `npx skills` を選んで更新する。インストール元を推定できれば Enter で採用できる
+## Features
 
-## 依存
+- **Inventory**: Filter by project / user scope and agent. Multi-select for bulk actions
+- **Metrics**: Compute activation rate from conversation logs and show a delete-recommendation score (`delete_score`)
+- **Add**: Install with `gh skill` or `npx skills` (chosen each time)
+- **Delete**: Prefer paths from the inventory (confirmation required). Warns when a symlink points at a shared real path
+- **Update**: Choose `gh skill` / `npx skills`. If provenance can be inferred, Enter accepts the suggestion
 
-| 必須 | 任意 |
-|------|------|
-| Rust 1.85+（edition 2024） | [`gh`](https://cli.github.com/)（`gh skill`） |
-| | Node.js / `npx`（[`npx skills`](https://skills.sh/)） |
+## Dependencies
 
-`gh` / `npx` がなくても一覧と発動率は動く。足りない CLI に依存する操作だけ無効になる。
+| Required | Optional |
+|----------|----------|
+| Rust 1.85+ (edition 2024) | [`gh`](https://cli.github.com/) (`gh skill`) |
+| | Node.js / `npx` ([`npx skills`](https://skills.sh/)) |
 
-## インストール / 起動
+Listing and activation metrics work without `gh` / `npx`. Only operations that need a missing CLI are disabled.
+
+## Install / run
 
 ```bash
 git clone https://github.com/malanjp/skillui.git
@@ -29,28 +31,28 @@ cd skillui
 cargo run --release
 ```
 
-パスに入れる場合:
+Install onto your `PATH`:
 
 ```bash
 cargo install --path .
 skillui
 ```
 
-### CLI オプション
+### CLI options
 
 ```bash
-skillui                              # cwd を project root として起動
+skillui                              # use cwd as project root
 skillui --project-root /path/to/repo
-skillui --window-days 30             # 発動率の集計窓（日）
-skillui --max-sessions 200           # エージェントあたり読むセッション数（既定 80）
-skillui --max-bytes 1048576          # セッションファイルあたりの読込上限バイト（既定 256KiB）
-skillui --full-scan                  # セッション / バイト上限なし（大きいログツリーでは遅い）
-skillui --dump-json                  # TUI なしでインベントリを JSON 出力
+skillui --window-days 30             # activation window (days)
+skillui --max-sessions 200           # sessions read per agent (default 80)
+skillui --max-bytes 1048576          # max bytes per session file (default 256KiB)
+skillui --full-scan                  # no session / byte caps (slow on large log trees)
+skillui --dump-json                  # print inventory as JSON (no TUI)
 ```
 
-起動時はスキル一覧を先に出し、その後に発動率をサンプリング解析する。既定上限なら通常 1〜2 秒程度で一覧まで到達する。
+On startup the skill list appears first, then activation is sampled. With defaults, the list usually shows within about 1–2 seconds.
 
-## 画面
+## Screen
 
 ```
 ┌ skillui  scope:all  agents:all  sort:delete_score  window:30d  sample:≤80sess/256KiB ─┐
@@ -64,71 +66,71 @@ skillui --dump-json                  # TUI なしでインベントリを JSON �
 │ j/k  Space/* /x select  d/u on selection  / f s a r R ? q                               │
 ```
 
-左が一覧、右が詳細。行頭の `[ ]` / `[x]` は複数選択。デフォルトソートは `delete_score`（高いほど削除候補）。
+List on the left, detail on the right. `[ ]` / `[x]` mark multi-select. Default sort is `delete_score` (higher = stronger delete candidate).
 
-タイトルの `sample:` は発動率解析の上限、ステータスの `sampled (-N older)` はスキップした古いセッション数を示す。
+`sample:` in the title is the activation analysis cap; `sampled (-N older)` in the status is how many older sessions were skipped.
 
-## キーバインド
+## Keybindings
 
-| キー | 動作 |
-|------|------|
-| `j` / `k` | 移動 |
-| `Space` | 行の選択トグル |
-| `*` | 表示中を全選択 / 全解除 |
-| `x` | 選択クリア |
-| `/` | 名前・説明の検索 |
-| `f` | フィルタパネル |
-| `s` | ソート切替（`name` → `rate` → `delete_score` → `last_hit`） |
-| `a` | 追加フロー |
-| `d` | 削除確認（選択があれば一括、なければカーソル行） |
-| `u` | 更新（backend 選択。推定があれば Enter で採用） |
-| `r` | 軽い再スキャン（一覧のみ） |
-| `R` | 発動率を再計算 |
-| `?` | ヘルプ |
-| `q` | 終了 |
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Move |
+| `Space` | Toggle row selection |
+| `*` | Select / clear all visible |
+| `x` | Clear selection |
+| `/` | Search name / description |
+| `f` | Filter panel |
+| `s` | Cycle sort (`name` → `rate` → `delete_score` → `last_hit`) |
+| `a` | Add flow |
+| `d` | Delete confirm (selection if any, else current row) |
+| `u` | Update (pick backend; Enter uses suggestion when available) |
+| `r` | Light rescan (list only) |
+| `R` | Recompute activation stats |
+| `?` | Help |
+| `q` | Quit |
 
-### フィルタ（`f`）
+### Filter (`f`)
 
-| キー | 内容 |
-|------|------|
-| `p` / `u` / `a` | project / user / 全スコープ |
-| `1` / `2` / `3` / `0` | cursor / claude-code / codex / 全エージェント |
-| `c` | フィルタクリア |
+| Key | Meaning |
+|-----|---------|
+| `p` / `u` / `a` | project / user / all scopes |
+| `1` / `2` / `3` / `0` | cursor / claude-code / codex / all agents |
+| `c` | Clear filters |
 
-### 追加（`a`）
+### Add (`a`)
 
-ダイアログで順に進む。`Esc` で前のステップ、`q` で中止。
+Step through dialogs. `Esc` goes back one step; `q` cancels.
 
-1. backend 選択: `1`/`g` = `gh skill`、`2`/`n` = `npx skills`
-2. ソース入力（gh: 検索語、npx: `owner/repo` または `owner/repo@skill`）
-3. 結果選択（gh の場合）
-4. エージェント（`1`/`2`/`3`）→ スコープ（`p`/`u`）で実行
+1. Backend: `1`/`g` = `gh skill`, `2`/`n` = `npx skills`
+2. Source (gh: search query; npx: `owner/repo` or `owner/repo@skill`)
+3. Pick result (gh only)
+4. Agent (`1`/`2`/`3`) → scope (`p`/`u`) to run
 
-### 削除（`d`）
+### Delete (`d`)
 
-- `y` / `Enter` で実行、`n` / `q` / `Esc` でキャンセル
-- `1`/`2`/`3` で対象エージェントを絞り、`0` で全エージェントに戻す
-- 共有実体（例: `~/.agents/skills`）を指す symlink は警告する
-- 削除後は一覧だけ再スキャンする。発動率は `R` で再計算する
+- `y` / `Enter` confirm; `n` / `q` / `Esc` cancel
+- `1`/`2`/`3` narrow agents; `0` restore all agents
+- Symlinks into a shared real path (e.g. `~/.agents/skills`) produce a warning
+- After delete, only the list is rescanned. Press `R` to recompute activation
 
-### 更新（`u`）
+### Update (`u`)
 
-1. backend 選択: `1`/`g` = `gh skill`、`2`/`n` = `npx skills`
-2. 推定があるときは `Enter` でその backend を採用できる
-3. 片方の CLI しか無い場合は選択を省略する
+1. Backend: `1`/`g` = `gh skill`, `2`/`n` = `npx skills`
+2. When a suggestion exists, `Enter` accepts it
+3. If only one CLI is available, the picker is skipped
 
-推定の優先順位:
+Suggestion priority:
 
-| 判定 | 推定 |
-|------|------|
-| `SKILL.md` に `github-repo` / `github-tree-sha` がある、または `gh skill list` の provenance | `gh skill` |
-| `~/.agents/.skill-lock.json`（または project 側の lock）に載っている | `npx skills` |
-| 両方ある場合 | `gh skill` を優先 |
-| 混在・不明 | 推定なし（手動選択） |
+| Signal | Suggested |
+|--------|-----------|
+| `SKILL.md` has `github-repo` / `github-tree-sha`, or provenance from `gh skill list` | `gh skill` |
+| Present in `~/.agents/.skill-lock.json` (or project lock) | `npx skills` |
+| Both | prefer `gh skill` |
+| Mixed / unknown | no suggestion (pick manually) |
 
-`gh skill update` は、メタデータのあるホストディレクトリ（`.cursor` / `.codex` など）を優先して `--dir` する。`npx skills update` はスコープに応じて `-g` / `-p` を付ける。
+`gh skill update` prefers host dirs with metadata (`.cursor` / `.codex`, …) for `--dir`. `npx skills update` adds `-g` / `-p` from scope.
 
-## スキャン対象
+## Scan roots
 
 | Agent | project | user |
 |-------|---------|------|
@@ -136,60 +138,60 @@ skillui --dump-json                  # TUI なしでインベントリを JSON �
 | claude-code | `.claude/skills/` | `~/.claude/skills/` |
 | codex | `.agents/skills/` | `~/.codex/skills/` |
 
-同一スキルが複数ホストにある場合は 1 行に集約する。
+The same skill on multiple hosts is merged into one row.
 
-追加のメタデータ:
+Extra metadata:
 
-- `gh skill list --json` があれば `source_url` / `version` / `pinned` を付与する
-- `~/.agents/.skill-lock.json` があれば `source: npx` を付与する（`npx skills list` は起動時に呼ばない）
+- If `gh skill list --json` is available, attach `source_url` / `version` / `pinned`
+- If `~/.agents/.skill-lock.json` exists, set `source: npx` (startup does **not** call `npx skills list`)
 
-スコープ語彙は `gh skill` 準拠（`project` / `user`）。`npx skills -g` は user と同一視する。
+Scope vocabulary follows `gh skill` (`project` / `user`). `npx skills -g` is treated as user.
 
-## 発動率と削除スコア
+## Activation rate and delete score
 
-直近 N 日（デフォルト 30）のセッションログを解析し、スキル名またはパス言及を **セッション単位でユニークカウント** する。
+Parse session logs for the last N days (default 30) and count skill-name or path mentions **uniquely per session**.
 
-| ソース | パス |
+| Source | Path |
 |--------|------|
 | Cursor | `~/.cursor/projects/**/agent-transcripts/**/*.jsonl` |
 | Claude Code | `~/.claude/projects/**/*.jsonl` |
 | Codex | `~/.codex/sessions/**/rollout-*.jsonl` |
 
-- `activation_rate` = `hits / sessions_total`（セッション 0 のときは N/A）
-- `delete_score` が高いほど削除候補（下記の加点の合計）
-- 詳細のラベル: `keep`（35 未満） / `review`（35–59） / `consider delete`（60 以上）
+- `activation_rate` = `hits / sessions_total` (N/A when sessions are 0)
+- `delete_score` is higher for stronger delete candidates (sum of the points below)
+- Detail labels: `keep` (under 35) / `review` (35–59) / `consider delete` (60+)
 
-`delete_score` の加点（実装: `src/analytics/score.rs`）:
+`delete_score` points (see `src/analytics/score.rs`):
 
-| 要因 | 条件 | 加点 |
-|------|------|------|
-| 発動率 | セッションなし / 不明 | +25 |
+| Factor | Condition | Points |
+|--------|-----------|--------|
+| Activation rate | no sessions / unknown | +25 |
 | | 0% | +40 |
-| | 5% 未満 | +30 |
-| | 15% 未満 | +15 |
-| | 30% 未満 | +5 |
-| 最終ヒット | なし | +20 |
-| | 60 日超 | +25 |
-| | 30 日超 | +15 |
-| | 14 日超 | +8 |
-| ホスト数 | 3 エージェント以上 | +10 |
-| | 2 エージェント | +5 |
-| provenance | `manual` かつ `source_url` なし | +5 |
-| ヒット | `hits == 0` | +10 |
+| | under 5% | +30 |
+| | under 15% | +15 |
+| | under 30% | +5 |
+| Last hit | none | +20 |
+| | over 60 days | +25 |
+| | over 30 days | +15 |
+| | over 14 days | +8 |
+| Host count | 3+ agents | +10 |
+| | 2 agents | +5 |
+| Provenance | `manual` and no `source_url` | +5 |
+| Hits | `hits == 0` | +10 |
 
-ログ照合はヒューリスティックであり、厳密な「スキル実行回数」ではない。削除前の判断材料として使う。
+Log matching is heuristic — not a precise “skill execution count”. Use it as a signal before deleting.
 
-速度のため、既定ではエージェントあたり **直近 80 セッション**、ファイルあたり **最大 256KiB** だけ読む。上限は `--max-sessions` / `--max-bytes` / `--full-scan` で変えられる。
+For speed, defaults read only the **latest 80 sessions per agent** and **up to 256KiB per file**. Change with `--max-sessions` / `--max-bytes` / `--full-scan`.
 
-## 開発
+## Development
 
 ```bash
 cargo test --lib
 cargo run --release -- --dump-json
 ```
 
-設計メモ: [docs/superpowers/specs/2026-08-04-skillui-design.md](docs/superpowers/specs/2026-08-04-skillui-design.md)
+Design notes: [docs/superpowers/specs/2026-08-04-skillui-design.md](docs/superpowers/specs/2026-08-04-skillui-design.md)
 
-## ライセンス
+## License
 
-未定（リポジトリ作成時点では未設定）。
+TBD (unset at repository creation time).
