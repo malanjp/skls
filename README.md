@@ -7,16 +7,16 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/malanjp/skls)](https://github.com/malanjp/skls/releases)
 
-**skls** (*skills list*) — a TUI for managing agent skills across Cursor, Claude Code, and Codex.
+**skls** (*skills list*) — a TUI for managing agent skills across Cursor, Claude Code, Codex, and 20+ other hosts.
 
 See which skills are installed, where they apply, and whether they are used — then add, delete, or update them from the same screen.
 
 ## Features
 
-- **Inventory**: Filter by project / user scope and agent. Multi-select for bulk actions
+- **Inventory**: 27 agent hosts (Cursor loads `~/.agents/skills` too). Filter by project / user scope and agent; multi-select for bulk actions
 - **Metrics**: Compute activation rate from conversation logs and show a delete-recommendation score (`delete_score`)
-- **Add**: Install with `gh skill` or `npx skills` (chosen each time)
-- **Delete**: Prefer paths from the inventory (confirmation required). Warns when a symlink points at a shared real path
+- **Add**: Install with `gh skill` or `npx skills` (chosen each time). Defaults to cursor / claude-code / codex; `*` selects every host
+- **Delete**: Remove inventory paths (confirmation required). npx-sourced skills also run `npx skills remove`. Warns on shared-store paths
 - **Update**: Choose `gh skill` / `npx skills`. If provenance can be inferred, Enter accepts the suggestion
 
 ## Dependencies
@@ -102,8 +102,10 @@ List on the left, detail on the right. `[ ]` / `[x]` mark multi-select. Default 
 | Key | Meaning |
 |-----|---------|
 | `p` / `u` / `a` | project / user / all scopes |
-| `1` / `2` / `3` / `0` | cursor / claude-code / codex / all agents |
-| `c` | Clear filters |
+| `j` / `k` · `Space` | Move / toggle agent filter (empty = all) |
+| `*` / `0` | Clear agent filter (all agents) |
+| `x` | Clear agent filter |
+| `c` | Clear all filters |
 
 ### Add (`a`)
 
@@ -119,7 +121,8 @@ Step through dialogs. `Esc` goes back one step; `q` cancels.
 - Starts with all agents present on the target skills selected
 - `j`/`k` move, `Space` toggle, `*` select all, `x` clear all
 - `y` / `Enter` confirm; `n` / `q` / `Esc` cancel
-- Symlinks into a shared real path (e.g. `~/.agents/skills`) produce a warning
+- Removes inventory paths first; for `source: npx`, also runs `npx skills remove` per selected agent
+- Paths under a shared store (e.g. `~/.agents/skills`) produce a warning; duplicate paths are deduped
 - After delete, only the list is rescanned. Press `R` to recompute activation
 
 ### Update (`u`)
@@ -204,6 +207,8 @@ Log matching is heuristic — not a precise “skill execution count”. Use it 
 For speed, defaults read only the **latest 80 sessions per agent** and **up to 256KiB per file**. Change with `--max-sessions` / `--max-bytes` / `--full-scan`.
 
 ## Development
+
+See [AGENTS.md](AGENTS.md) for layout and contributor notes.
 
 ```bash
 cargo test --lib

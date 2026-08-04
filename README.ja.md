@@ -7,16 +7,16 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![GitHub release](https://img.shields.io/github/v/release/malanjp/skls)](https://github.com/malanjp/skls/releases)
 
-**skls**（*skills list*）— Cursor / Claude Code / Codex のエージェントスキルを横断管理する TUI。
+**skls**（*skills list*）— Cursor / Claude Code / Codex ほか 20+ ホストのエージェントスキルを横断管理する TUI。
 
 どのスキルが入っているか、どこに効いているか、使われているかを一覧で把握し、追加・削除・更新まで同じ画面で行う。
 
 ## できること
 
-- **一覧**: project / user スコープとエージェントでフィルタ。複数選択して一括操作できる
+- **一覧**: 27 エージェントホスト（Cursor が読む `~/.agents/skills` も含む）。project / user とエージェントでフィルタ、複数選択で一括操作
 - **指標**: 会話ログから発動率を算出し、削除判断スコア（`delete_score`）を表示する
-- **追加**: 都度 `gh skill` か `npx skills` を選んでインストールする
-- **削除**: インベントリ上のパスを優先して削除する（確認必須）。共有実体への symlink は警告する
+- **追加**: 都度 `gh skill` か `npx skills` を選んでインストール。初期選択は cursor / claude-code / codex（`*` で全ホスト）
+- **削除**: インベントリ上のパスを削除（確認必須）。npx 由来は `npx skills remove` も実行。共有ストアパスは警告
 - **更新**: `gh skill` / `npx skills` を選んで更新する。インストール元を推定できれば Enter で採用できる
 
 ## 依存
@@ -102,8 +102,10 @@ skls --dump-json                     # TUI なしでインベントリを JSON �
 | キー | 内容 |
 |------|------|
 | `p` / `u` / `a` | project / user / 全スコープ |
-| `1` / `2` / `3` / `0` | cursor / claude-code / codex / 全エージェント |
-| `c` | フィルタクリア |
+| `j` / `k` · `Space` | エージェントフィルタの移動 / トグル（空 = 全エージェント） |
+| `*` / `0` | エージェントフィルタ解除（全エージェント） |
+| `x` | エージェントフィルタ解除 |
+| `c` | 全フィルタクリア |
 
 ### 追加（`a`）
 
@@ -119,7 +121,8 @@ skls --dump-json                     # TUI なしでインベントリを JSON �
 - 開始時は対象スキルが持つエージェントがすべて選択される
 - `j`/`k` で移動、`Space` でトグル、`*` 全選択、`x` 全解除
 - `y` / `Enter` で実行、`n` / `q` / `Esc` でキャンセル
-- 共有実体（例: `~/.agents/skills`）を指す symlink は警告する
+- インベントリのパスを先に削除し、`source: npx` なら選択エージェントごとに `npx skills remove` も実行する
+- 共有ストア（例: `~/.agents/skills`）上のパスは警告。複数ホストで同じパスは重複排除する
 - 削除後は一覧だけ再スキャンする。発動率は `R` で再計算する
 
 ### 更新（`u`）
@@ -204,6 +207,8 @@ skls --dump-json                     # TUI なしでインベントリを JSON �
 速度のため、既定ではエージェントあたり **直近 80 セッション**、ファイルあたり **最大 256KiB** だけ読む。上限は `--max-sessions` / `--max-bytes` / `--full-scan` で変えられる。
 
 ## 開発
+
+構成・注意点は [AGENTS.md](AGENTS.md) を参照。
 
 ```bash
 cargo test --lib
