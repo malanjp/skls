@@ -67,7 +67,18 @@ pub fn execute_delete(
     prefer_npx: bool,
 ) -> Result<Vec<String>> {
     let mut messages = Vec::new();
-    let mut npx_ok = prefer_npx;
+
+    // Prefer filesystem paths from inventory. `npx skills remove` can hang on
+    // prompts/network and freezes the TUI event loop if awaited first.
+    if !plan.paths.is_empty() {
+        for path in &plan.paths {
+            match remove_skill_path(path) {
+                Ok(()) => messages.push(format!("removed {}", path.display())),
+                Err(err) => messages.push(format!("failed {}: {err}", path.display())),
+            }
+        }
+        return Ok(messages);
+    }
 
     if prefer_npx {
         let cli = NpxSkillsCli { runner };
@@ -83,17 +94,13 @@ pub fn execute_delete(
                 }
                 Err(err) => {
                     messages.push(format!("npx remove failed for {agent}: {err}"));
-                    npx_ok = false;
                 }
             }
         }
     }
 
-    if !npx_ok || !prefer_npx {
-        for path in &plan.paths {
-            remove_skill_path(path)?;
-            messages.push(format!("removed {}", path.display()));
-        }
+    if messages.is_empty() {
+        return Err(anyhow!("nothing to delete for {}", plan.skill_name));
     }
     Ok(messages)
 }

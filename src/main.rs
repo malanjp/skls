@@ -7,7 +7,10 @@ use crossterm::terminal::{
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
-use skillui::app::App;
+use skillui::adapters::command::SystemCommandRunner;
+use skillui::analytics::AnalyzeLimits;
+use skillui::app::{App, PendingAction};
+use skillui::ops::{execute_delete, execute_update};
 use skillui::ui::draw;
 use std::io::{self, stdout};
 use std::path::PathBuf;
@@ -24,6 +27,18 @@ struct Cli {
     #[arg(long, default_value_t = 30)]
     window_days: i64,
 
+    /// Max session files per agent when computing activations (newest first)
+    #[arg(long, default_value_t = 80)]
+    max_sessions: usize,
+
+    /// Max bytes to read from each session file
+    #[arg(long, default_value_t = 262_144)]
+    max_bytes: u64,
+
+    /// Disable session/byte caps (slow on large log trees)
+    #[arg(long)]
+    full_scan: bool,
+
     /// Skip launching TUI and print inventory as JSON
     #[arg(long)]
     dump_json: bool,
@@ -39,12 +54,24 @@ fn main() -> Result<()> {
 
     let mut app = App::new(project_root, home);
     app.window_days = cli.window_days;
-    app.reload().context("initial inventory load")?;
+    app.analyze_limits = if cli.full_scan {
+        AnalyzeLimits::unlimited()
+    } else {
+        AnalyzeLimits {
+            max_files_per_agent: cli.max_sessions,
+            max_bytes_per_file: cli.max_bytes,
+        }
+    };
 
     if cli.dump_json {
+        // JSON dump needs stats in one shot.
+        app.reload().context("inventory load")?;
         println!("{}", serde_json::to_string_pretty(&dump_records(&app))?);
         return Ok(());
     }
+
+    // Show the list ASAP; activation analysis runs after the first paint.
+    app.bootstrap_fast().context("initial inventory load")?;
 
     enable_raw_mode()?;
     let mut out = stdout();
@@ -63,6 +90,13 @@ fn main() -> Result<()> {
 fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
     loop {
         terminal.draw(|f| draw(f, app))?;
+
+        // Run deferred work after a redraw so the Busy modal is visible first.
+        if let Some(action) = app.pending_action.take() {
+            run_pending_action(terminal, app, action)?;
+            continue;
+        }
+
         if event::poll(Duration::from_millis(250))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
@@ -72,6 +106,83 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
         }
         if app.should_quit {
             break;
+        }
+    }
+    Ok(())
+}
+
+fn run_pending_action(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+    action: PendingAction,
+) -> Result<()> {
+    match action {
+        PendingAction::Delete(plans) => {
+            let label = if plans.len() == 1 {
+                format!("Deleting '{}' …", plans[0].skill_name)
+            } else {
+                format!("Deleting {} skills …", plans.len())
+            };
+            app.set_busy(label);
+            terminal.draw(|f| draw(f, app))?;
+
+            let runner = SystemCommandRunner;
+            let mut msgs = Vec::new();
+            let mut errors = Vec::new();
+            for plan in &plans {
+                match execute_delete(&runner, plan, false) {
+                    Ok(m) => msgs.extend(m),
+                    Err(err) => errors.push(format!("{}: {err}", plan.skill_name)),
+                }
+            }
+            // Inventory ids are skill directory names (== skill_name).
+            for plan in &plans {
+                app.checked.remove(&(plan.skill_name.clone(), plan.scope));
+            }
+
+            app.set_busy("Refreshing skill list …");
+            terminal.draw(|f| draw(f, app))?;
+
+            let refresh_result = app.reload_light();
+
+            let mut body = msgs.join("\n");
+            if !errors.is_empty() {
+                if !body.is_empty() {
+                    body.push_str("\n\n");
+                }
+                body.push_str(&errors.join("\n"));
+            }
+            match refresh_result {
+                Ok(()) => app.show_message(format!(
+                    "{body}\n\n(Press R to recompute activation stats)"
+                )),
+                Err(err) => app.show_message(format!("{body}\n\nrefresh failed: {err}")),
+            }
+        }
+        PendingAction::Update(names) => {
+            let label = if names.len() == 1 {
+                format!("Updating '{}' …", names[0])
+            } else {
+                format!("Updating {} skills …", names.len())
+            };
+            app.set_busy(label);
+            terminal.draw(|f| draw(f, app))?;
+
+            let runner = SystemCommandRunner;
+            let mut msgs = Vec::new();
+            for name in &names {
+                match execute_update(&runner, name) {
+                    Ok(m) => msgs.push(m),
+                    Err(err) => msgs.push(format!("update {name} failed: {err}")),
+                }
+            }
+            let _ = app.reload_light();
+            app.show_message(msgs.join("\n\n"));
+        }
+        PendingAction::AnalyzeActivations => {
+            app.set_busy("Analyzing activations (recent sessions) …");
+            terminal.draw(|f| draw(f, app))?;
+            app.analyze_activations()?;
         }
     }
     Ok(())

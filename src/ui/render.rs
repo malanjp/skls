@@ -24,6 +24,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     match app.mode {
         Mode::Help => draw_help_modal(frame),
         Mode::Message => draw_message_modal(frame, &app.message),
+        Mode::Busy => draw_busy_modal(frame, &app.busy_message),
         Mode::Filter => draw_filter_modal(frame, app),
         Mode::Search => {}
         Mode::AddBackend => draw_add_backend_modal(frame),
@@ -52,8 +53,17 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
             .collect::<Vec<_>>()
             .join(",")
     };
+    let sample = if app.analyze_limits.is_unlimited() {
+        "full".to_string()
+    } else {
+        format!(
+            "≤{}sess/{}KiB",
+            app.analyze_limits.max_files_per_agent,
+            app.analyze_limits.max_bytes_per_file / 1024
+        )
+    };
     let title = format!(
-        " skillui  scope:{scope}  agents:{agents}  sort:{}  window:{}d ",
+        " skillui  scope:{scope}  agents:{agents}  sort:{}  window:{}d  sample:{sample} ",
         app.sort_key.as_str(),
         app.window_days
     );
@@ -82,14 +92,15 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
         .iter()
         .map(|&skill_i| {
             let s = &app.skills[skill_i];
+            let mark = if app.is_checked(s) { "[x]" } else { "[ ]" };
             let rate = s
                 .stats
                 .activation_rate
                 .map(|r| format!("{:>5.1}%", r * 100.0))
                 .unwrap_or_else(|| "  n/a".into());
             let line = format!(
-                "{:<22} {:7} {rate} {:>5.0}",
-                truncate(&s.name, 22),
+                "{mark} {:<20} {:7} {rate} {:>5.0}",
+                truncate(&s.name, 20),
                 s.scope.as_str(),
                 s.stats.delete_score
             );
@@ -97,11 +108,19 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
         })
         .collect();
 
+    let list_title = if app.checked_count() > 0 {
+        format!(
+            " NAME                 SCOPE   RATE  SCORE  ({} selected) ",
+            app.checked_count()
+        )
+    } else {
+        " NAME                 SCOPE   RATE  SCORE ".into()
+    };
     let list = List::new(items)
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(" NAME                 SCOPE   RATE  SCORE "),
+                .title(list_title),
         )
         .highlight_style(
             Style::default()
@@ -180,9 +199,23 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         format!(" | !{}", app.warnings[0])
     };
-    let text = format!(
-        " j/k move  / search  f filter  s sort  a add  d delete  u update  r refresh  ? help  q quit{warn} "
-    );
+    let text = match app.mode {
+        Mode::DeleteConfirm => {
+            " y/Enter confirm  n/q/Esc cancel  1/2/3 narrow  0 all agents ".to_string()
+        }
+        Mode::Help | Mode::Message => " Enter/Esc/q back ".to_string(),
+        Mode::Busy => " working — please wait … ".to_string(),
+        Mode::Filter => " p/u/a scope  1/2/3/0 agents  c clear  Esc back ".to_string(),
+        Mode::Search => format!(" /{}  Enter apply  Esc cancel ", app.input),
+        Mode::AddBackend => " 1/g gh skill  2/n npx skills  Esc cancel ".to_string(),
+        Mode::AddQuery => format!(" query> {}  Enter  Esc cancel ", app.input),
+        Mode::AddResults => " j/k select  Enter  Esc cancel ".to_string(),
+        Mode::AddAgent => " 1 cursor  2 claude-code  3 codex  Esc cancel ".to_string(),
+        Mode::AddScope => " p project  u user  Esc cancel ".to_string(),
+        Mode::List => format!(
+            " j/k  Space/* /x select  d/u on selection  / f s a r R ? q{warn} "
+        ),
+    };
     let p = Paragraph::new(text).block(Block::default().borders(Borders::ALL));
     frame.render_widget(p, area);
 }
@@ -194,9 +227,21 @@ fn draw_help_modal(frame: &mut Frame) {
 Keys
   j/k  move          /  search
   f    filter        s  cycle sort
-  a    add skill     d  delete
-  u    gh update     r  refresh
+  a    add skill     d  delete (selection or row)
+  u    gh update     r  light refresh
+  R    recompute activation stats
   ?    help          q  quit
+
+Multi-select
+  Space        toggle row
+  *            select/clear all visible
+  x            clear selection
+  d / u        apply to selection (or current row)
+
+CLI (sampling)
+  --max-sessions N   sessions/agent (default 80)
+  --max-bytes N      bytes/file (default 262144)
+  --full-scan        no caps (slow)
 
 Filter mode
   p project  u user  a all scopes
@@ -207,8 +252,8 @@ Add flow
   pick backend (gh / npx) → query → select → agent → scope
 
 Delete
-  y confirm all agents in plan
-  1/2/3 narrow to one agent first
+  y confirm
+  1/2/3 narrow agents  0 all agents
   n/Esc cancel
 ";
     let p = Paragraph::new(text).block(
@@ -226,6 +271,23 @@ fn draw_message_modal(frame: &mut Frame, message: &str) {
     let p = Paragraph::new(message.to_string())
         .wrap(Wrap { trim: false })
         .block(Block::default().borders(Borders::ALL).title(" result (Enter) "));
+    frame.render_widget(p, area);
+}
+
+fn draw_busy_modal(frame: &mut Frame, message: &str) {
+    let area = centered(frame.area(), 60, 30);
+    frame.render_widget(Clear, area);
+    let body = format!(
+        "{message}\n\nPlease wait.\nThe UI is blocked until this finishes."
+    );
+    let p = Paragraph::new(body)
+        .wrap(Wrap { trim: false })
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" working ")
+                .style(Style::default().fg(Color::Cyan)),
+        );
     frame.render_widget(p, area);
 }
 
@@ -294,29 +356,79 @@ fn draw_add_scope_modal(frame: &mut Frame) {
 }
 
 fn draw_delete_modal(frame: &mut Frame, app: &App) {
-    let area = centered(frame.area(), 70, 50);
+    let area = centered(frame.area(), 70, 55);
     frame.render_widget(Clear, area);
-    let body = if let Some(plan) = &app.delete_plan {
-        let paths = plan
-            .paths
-            .iter()
-            .map(|p| format!("  {}", p.display()))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let warn = plan
-            .shared_warning
-            .as_deref()
-            .unwrap_or("");
-        format!(
-            "Delete '{}' ({}) from {:?}?\n\npaths:\n{}\n\n{}\n\ny confirm  n cancel\n1/2/3 narrow agents",
-            plan.skill_name,
-            plan.scope,
-            plan.agents.iter().map(|a| a.as_str()).collect::<Vec<_>>(),
-            paths,
-            warn
-        )
+    let plans = app.delete_plans();
+    let body = if plans.is_empty() {
+        "nothing to delete (try 0 for all agents)".into()
     } else {
-        "nothing to delete".into()
+        let filter = match &app.delete_agent_filter {
+            Some(agents) => agents
+                .iter()
+                .map(|a| a.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
+            None => "all".into(),
+        };
+        let mut lines = Vec::new();
+        if plans.len() == 1 {
+            let plan = &plans[0];
+            lines.push(format!(
+                "Delete '{}' ({}) — agents: {filter}",
+                plan.skill_name, plan.scope
+            ));
+        } else {
+            lines.push(format!("Delete {} skills — agents: {filter}", plans.len()));
+        }
+        lines.push(String::new());
+        for plan in plans.iter().take(12) {
+            lines.push(format!(
+                "  • {} ({}) [{}]",
+                plan.skill_name,
+                plan.scope,
+                plan.agents
+                    .iter()
+                    .map(|a| a.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ));
+        }
+        if plans.len() > 12 {
+            lines.push(format!("  … and {} more", plans.len() - 12));
+        }
+        lines.push(String::new());
+        lines.push("paths:".into());
+        let mut path_count = 0usize;
+        for plan in &plans {
+            for path in &plan.paths {
+                if path_count >= 10 {
+                    break;
+                }
+                lines.push(format!("  {}", path.display()));
+                path_count += 1;
+            }
+            if path_count >= 10 {
+                break;
+            }
+        }
+        let total_paths: usize = plans.iter().map(|p| p.paths.len()).sum();
+        if total_paths > path_count {
+            lines.push(format!("  … and {} more paths", total_paths - path_count));
+        }
+        let warns: Vec<&str> = plans
+            .iter()
+            .filter_map(|p| p.shared_warning.as_deref())
+            .collect();
+        if !warns.is_empty() {
+            lines.push(String::new());
+            lines.push(warns[0].into());
+            if warns.len() > 1 {
+                lines.push(format!("(+{} more shared-path warnings)", warns.len() - 1));
+            }
+        }
+        lines.push(String::new());
+        lines.push("y/Enter confirm · n/q/Esc cancel · 1/2/3 narrow · 0 all".into());
+        lines.join("\n")
     };
     let p = Paragraph::new(body)
         .wrap(Wrap { trim: false })
