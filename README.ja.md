@@ -2,6 +2,11 @@
 
 [English](README.md) | [日本語](README.ja.md)
 
+[![crates.io](https://img.shields.io/crates/v/skls.svg)](https://crates.io/crates/skls)
+[![docs.rs](https://docs.rs/skls/badge.svg)](https://docs.rs/skls)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![GitHub release](https://img.shields.io/github/v/release/malanjp/skls)](https://github.com/malanjp/skls/releases)
+
 **skls**（*skills list*）— Cursor / Claude Code / Codex のエージェントスキルを横断管理する TUI。
 
 どのスキルが入っているか、どこに効いているか、使われているかを一覧で把握し、追加・削除・更新まで同じ画面で行う。

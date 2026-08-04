@@ -2,6 +2,11 @@
 
 [English](README.md) | [日本語](README.ja.md)
 
+[![crates.io](https://img.shields.io/crates/v/skls.svg)](https://crates.io/crates/skls)
+[![docs.rs](https://docs.rs/skls/badge.svg)](https://docs.rs/skls)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![GitHub release](https://img.shields.io/github/v/release/malanjp/skls)](https://github.com/malanjp/skls/releases)
+
 **skls** (*skills list*) — a TUI for managing agent skills across Cursor, Claude Code, and Codex.
 
 See which skills are installed, where they apply, and whether they are used — then add, delete, or update them from the same screen.
