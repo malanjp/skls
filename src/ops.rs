@@ -123,29 +123,37 @@ pub fn execute_add(
     backend: AddBackend,
     package_or_repo: &str,
     skill: &str,
-    agent: Agent,
+    agents: &[Agent],
     scope: Scope,
 ) -> Result<String> {
-    match backend {
-        AddBackend::GhSkill => {
-            let cli = GhSkillCli { runner };
-            let out = cli.install(package_or_repo, skill, agent, scope)?;
-            Ok(format!(
-                "gh skill install ok\n{}\n{}",
-                out.stdout.trim(),
-                out.stderr.trim()
-            ))
-        }
-        AddBackend::NpxSkills => {
-            let cli = NpxSkillsCli { runner };
-            let out = cli.add(package_or_repo, Some(skill), agent, scope)?;
-            Ok(format!(
-                "npx skills add ok\n{}\n{}",
-                out.stdout.trim(),
-                out.stderr.trim()
-            ))
-        }
+    if agents.is_empty() {
+        return Err(anyhow!("no agents selected"));
     }
+    let mut msgs = Vec::new();
+    for &agent in agents {
+        let msg = match backend {
+            AddBackend::GhSkill => {
+                let cli = GhSkillCli { runner };
+                let out = cli.install(package_or_repo, skill, agent, scope)?;
+                format!(
+                    "gh skill install ok ({agent})\n{}\n{}",
+                    out.stdout.trim(),
+                    out.stderr.trim()
+                )
+            }
+            AddBackend::NpxSkills => {
+                let cli = NpxSkillsCli { runner };
+                let out = cli.add(package_or_repo, Some(skill), agent, scope)?;
+                format!(
+                    "npx skills add ok ({agent})\n{}\n{}",
+                    out.stdout.trim(),
+                    out.stderr.trim()
+                )
+            }
+        };
+        msgs.push(msg);
+    }
+    Ok(msgs.join("\n\n"))
 }
 
 #[derive(Debug, Clone)]
@@ -282,7 +290,9 @@ fn skill_has_gh_metadata(skill: &SkillRecord) -> bool {
 
 /// Ordered skill-root dirs for `gh skill update --dir`, preferring copies
 /// that already carry GitHub metadata in SKILL.md.
-pub fn prefer_update_dirs(skill: &SkillRecord) -> Vec<PathBuf> {
+///
+/// Only locations whose agent is in `agents` are considered.
+pub fn prefer_update_dirs(skill: &SkillRecord, agents: &[Agent]) -> Vec<PathBuf> {
     let score = |path: &Path| -> i32 {
         let s = path.to_string_lossy();
         let mut n = if s.contains("/.agents/skills") {
@@ -303,6 +313,7 @@ pub fn prefer_update_dirs(skill: &SkillRecord) -> Vec<PathBuf> {
     let mut scored: Vec<(i32, PathBuf)> = skill
         .locations
         .iter()
+        .filter(|l| agents.contains(&l.agent))
         .filter_map(|l| {
             let parent = l.path.parent()?.to_path_buf();
             Some((score(&l.path), parent))
@@ -460,7 +471,49 @@ mod tests {
             pinned: false,
             stats: SkillStats::default(),
         };
-        let dirs = prefer_update_dirs(&skill);
+        let dirs = prefer_update_dirs(&skill, Agent::all());
         assert_eq!(dirs[0], cursor.parent().unwrap());
+    }
+
+    #[test]
+    fn prefer_update_dirs_filters_by_agent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let claude = tmp.path().join(".claude/skills/tdd");
+        let cursor = tmp.path().join(".cursor/skills/tdd");
+        fs::create_dir_all(&claude).unwrap();
+        fs::create_dir_all(&cursor).unwrap();
+        fs::write(claude.join("SKILL.md"), "---\nname: tdd\n---\n").unwrap();
+        fs::write(cursor.join("SKILL.md"), "---\nname: tdd\n---\n").unwrap();
+        let skill = SkillRecord {
+            id: "tdd".into(),
+            name: "tdd".into(),
+            description: String::new(),
+            scope: Scope::User,
+            agents: vec![Agent::ClaudeCode, Agent::Cursor],
+            locations: vec![
+                SkillLocation {
+                    agent: Agent::ClaudeCode,
+                    scope: Scope::User,
+                    path: claude.clone(),
+                    kind: InstallKind::Copy,
+                    resolved: None,
+                },
+                SkillLocation {
+                    agent: Agent::Cursor,
+                    scope: Scope::User,
+                    path: cursor,
+                    kind: InstallKind::Copy,
+                    resolved: None,
+                },
+            ],
+            install_kind: InstallKind::Copy,
+            source: InstallSource::Gh,
+            source_url: None,
+            version: None,
+            pinned: false,
+            stats: SkillStats::default(),
+        };
+        let dirs = prefer_update_dirs(&skill, &[Agent::ClaudeCode]);
+        assert_eq!(dirs, vec![claude.parent().unwrap().to_path_buf()]);
     }
 }

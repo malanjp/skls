@@ -112,20 +112,22 @@ Step through dialogs. `Esc` goes back one step; `q` cancels.
 1. Backend: `1`/`g` = `gh skill`, `2`/`n` = `npx skills`
 2. Source (gh: search query; npx: `owner/repo` or `owner/repo@skill`)
 3. Pick result (gh only)
-4. Agent (`1`/`2`/`3`) → scope (`p`/`u`) to run
+4. Agents (`j`/`k` move, `Space` toggle, `*` all, `x` none; `Enter` next) → scope (`p`/`u`) to run
 
 ### Delete (`d`)
 
+- Starts with all agents present on the target skills selected
+- `j`/`k` move, `Space` toggle, `*` select all, `x` clear all
 - `y` / `Enter` confirm; `n` / `q` / `Esc` cancel
-- `1`/`2`/`3` narrow agents; `0` restore all agents
 - Symlinks into a shared real path (e.g. `~/.agents/skills`) produce a warning
 - After delete, only the list is rescanned. Press `R` to recompute activation
 
 ### Update (`u`)
 
-1. Backend: `1`/`g` = `gh skill`, `2`/`n` = `npx skills`
-2. When a suggestion exists, `Enter` accepts it
-3. If only one CLI is available, the picker is skipped
+1. Agents: `j`/`k` move, `Space` toggle, `*` all, `x` none; `Enter` next
+2. Backend: `1`/`g` = `gh skill`, `2`/`n` = `npx skills` (`Esc` returns to agent selection)
+3. When a suggestion exists, `Enter` accepts it
+4. If only one CLI is available, the backend picker is skipped
 
 Suggestion priority:
 

@@ -36,6 +36,7 @@ pub enum Mode {
     AddResults,
     AddAgent,
     AddScope,
+    UpdateAgents,
     UpdateBackend,
     DeleteConfirm,
     Message,
@@ -73,20 +74,27 @@ pub struct App {
     pub gh_available: bool,
     pub npx_available: bool,
     pub add_backend: AddBackend,
+    /// Skills waiting for update agent / backend selection.
+    pub update_skills: Vec<SkillRecord>,
     /// Targets waiting for update-backend selection.
     pub update_jobs: Vec<UpdateJob>,
     pub update_suggested: Option<AddBackend>,
+    /// Agents selected for the pending update.
+    pub update_agents: Vec<Agent>,
     pub add_query: String,
     pub add_results: Vec<GhSkillSearchItem>,
     pub add_result_idx: usize,
     pub add_package: String,
     pub add_skill: String,
-    pub add_agent: Agent,
+    /// Agents selected for the pending add.
+    pub add_agents: Vec<Agent>,
     pub add_scope: Scope,
     /// Skills queued for delete confirmation (supports multi-select).
     pub delete_skills: Vec<SkillRecord>,
-    /// When set, delete plans are narrowed to these agents.
-    pub delete_agent_filter: Option<Vec<Agent>>,
+    /// Agents selected for the pending delete (toggle; empty = nothing).
+    pub delete_agents: Vec<Agent>,
+    /// Cursor into the available-agents list for j/k + Space toggles.
+    pub agent_focus: usize,
     /// Multi-select marks keyed by (id, scope).
     pub checked: HashSet<SkillKey>,
     pub message: String,
@@ -127,17 +135,20 @@ impl App {
             } else {
                 AddBackend::NpxSkills
             },
+            update_skills: Vec::new(),
             update_jobs: Vec::new(),
             update_suggested: None,
+            update_agents: Vec::new(),
             add_query: String::new(),
             add_results: Vec::new(),
             add_result_idx: 0,
             add_package: String::new(),
             add_skill: String::new(),
-            add_agent: Agent::Cursor,
+            add_agents: Agent::all().to_vec(),
             add_scope: Scope::User,
             delete_skills: Vec::new(),
-            delete_agent_filter: None,
+            delete_agents: Vec::new(),
+            agent_focus: 0,
             checked: HashSet::new(),
             message: String::new(),
             busy_message: String::new(),
@@ -154,9 +165,17 @@ impl App {
 
     pub fn cancel_delete(&mut self) {
         self.delete_skills.clear();
-        self.delete_agent_filter = None;
+        self.delete_agents.clear();
         self.mode = Mode::List;
         self.status = "delete cancelled".into();
+    }
+
+    pub fn delete_available_agents(&self) -> Vec<Agent> {
+        union_agents(self.delete_skills.iter())
+    }
+
+    pub fn update_available_agents(&self) -> Vec<Agent> {
+        union_agents(self.update_skills.iter())
     }
 
     pub fn is_checked(&self, skill: &SkillRecord) -> bool {
@@ -183,15 +202,12 @@ impl App {
         self.delete_skills
             .iter()
             .filter_map(|skill| {
-                let agents: Vec<Agent> = match &self.delete_agent_filter {
-                    Some(filter) => skill
-                        .agents
-                        .iter()
-                        .copied()
-                        .filter(|a| filter.contains(a))
-                        .collect(),
-                    None => skill.agents.clone(),
-                };
+                let agents: Vec<Agent> = skill
+                    .agents
+                    .iter()
+                    .copied()
+                    .filter(|a| self.delete_agents.contains(a))
+                    .collect();
                 if agents.is_empty() {
                     return None;
                 }
@@ -436,6 +452,7 @@ impl App {
             Mode::AddResults => self.handle_add_results_key(key),
             Mode::AddAgent => self.handle_add_agent_key(key),
             Mode::AddScope => self.handle_add_scope_key(key)?,
+            Mode::UpdateAgents => self.handle_update_agents_key(key),
             Mode::UpdateBackend => self.handle_update_backend_key(key),
             Mode::DeleteConfirm => self.handle_delete_key(key)?,
         }
@@ -558,8 +575,15 @@ impl App {
         self.add_results.clear();
         self.add_package.clear();
         self.add_skill.clear();
+        self.add_agents = Agent::all().to_vec();
         self.mode = Mode::List;
         self.status = "add cancelled".into();
+    }
+
+    fn enter_add_agent(&mut self) {
+        self.add_agents = Agent::all().to_vec();
+        self.agent_focus = 0;
+        self.mode = Mode::AddAgent;
     }
 
     fn handle_add_backend_key(&mut self, key: KeyEvent) {
@@ -645,7 +669,7 @@ impl App {
                     self.add_package = query;
                     self.add_skill = String::new();
                 }
-                self.mode = Mode::AddAgent;
+                self.enter_add_agent();
                 self.status = format!("追加中: {} → エージェント選択", self.add_package);
             }
         }
@@ -680,7 +704,7 @@ impl App {
                 if let Some(item) = self.add_results.get(self.add_result_idx) {
                     self.add_package = item.repo.clone();
                     self.add_skill = item.skill_name.clone();
-                    self.mode = Mode::AddAgent;
+                    self.enter_add_agent();
                 }
             }
             _ => {}
@@ -688,6 +712,14 @@ impl App {
     }
 
     fn handle_add_agent_key(&mut self, key: KeyEvent) {
+        if handle_agent_list_keys(
+            key,
+            &mut self.add_agents,
+            Agent::all(),
+            &mut self.agent_focus,
+        ) {
+            return;
+        }
         match key.code {
             KeyCode::Char('q') => self.cancel_add(),
             KeyCode::Esc => {
@@ -703,17 +735,12 @@ impl App {
                     self.input = self.add_query.clone();
                 }
             }
-            KeyCode::Char('1') => {
-                self.add_agent = Agent::Cursor;
-                self.mode = Mode::AddScope;
-            }
-            KeyCode::Char('2') => {
-                self.add_agent = Agent::ClaudeCode;
-                self.mode = Mode::AddScope;
-            }
-            KeyCode::Char('3') => {
-                self.add_agent = Agent::Codex;
-                self.mode = Mode::AddScope;
+            KeyCode::Enter => {
+                if self.add_agents.is_empty() {
+                    self.status = "select at least one agent".into();
+                } else {
+                    self.mode = Mode::AddScope;
+                }
             }
             _ => {}
         }
@@ -748,7 +775,7 @@ impl App {
             self.add_backend,
             &self.add_package,
             &skill,
-            self.add_agent,
+            &self.add_agents,
             self.add_scope,
         ) {
             Ok(msg) => {
@@ -773,12 +800,22 @@ impl App {
             self.show_message("no agent locations to delete".into());
             return;
         }
+        self.delete_agents = union_agents(deletable.iter());
         self.delete_skills = deletable;
-        self.delete_agent_filter = None;
+        self.agent_focus = 0;
         self.mode = Mode::DeleteConfirm;
     }
 
     fn handle_delete_key(&mut self, key: KeyEvent) -> Result<()> {
+        let available = self.delete_available_agents();
+        if handle_agent_list_keys(
+            key,
+            &mut self.delete_agents,
+            &available,
+            &mut self.agent_focus,
+        ) {
+            return Ok(());
+        }
         match key.code {
             // Footer still advertises `q`; accept it as cancel too.
             KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Char('q') => {
@@ -787,7 +824,7 @@ impl App {
             KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
                 let plans = self.delete_plans();
                 self.delete_skills.clear();
-                self.delete_agent_filter = None;
+                self.delete_agents.clear();
                 if plans.is_empty() {
                     self.show_message("nothing to delete for selected agents".into());
                 } else {
@@ -800,10 +837,6 @@ impl App {
                     self.pending_action = Some(PendingAction::Delete(plans));
                 }
             }
-            KeyCode::Char('1') => self.delete_agent_filter = Some(vec![Agent::Cursor]),
-            KeyCode::Char('2') => self.delete_agent_filter = Some(vec![Agent::ClaudeCode]),
-            KeyCode::Char('3') => self.delete_agent_filter = Some(vec![Agent::Codex]),
-            KeyCode::Char('0') => self.delete_agent_filter = None,
             _ => {}
         }
         Ok(())
@@ -818,16 +851,68 @@ impl App {
         if targets.is_empty() {
             return;
         }
-        self.update_suggested = suggested_update_backend_for(&targets);
-        self.update_jobs = targets
+        let with_agents: Vec<SkillRecord> = targets
+            .into_iter()
+            .filter(|s| !s.agents.is_empty())
+            .collect();
+        if with_agents.is_empty() {
+            self.show_message("no agent locations to update".into());
+            return;
+        }
+        self.update_suggested = suggested_update_backend_for(&with_agents);
+        self.update_agents = union_agents(with_agents.iter());
+        self.update_skills = with_agents;
+        self.update_jobs.clear();
+        self.agent_focus = 0;
+        self.mode = Mode::UpdateAgents;
+    }
+
+    fn cancel_update(&mut self) {
+        self.update_skills.clear();
+        self.update_jobs.clear();
+        self.update_agents.clear();
+        self.update_suggested = None;
+        self.mode = Mode::List;
+        self.status = "update cancelled".into();
+    }
+
+    fn handle_update_agents_key(&mut self, key: KeyEvent) {
+        let available = self.update_available_agents();
+        if handle_agent_list_keys(
+            key,
+            &mut self.update_agents,
+            &available,
+            &mut self.agent_focus,
+        ) {
+            return;
+        }
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => self.cancel_update(),
+            KeyCode::Enter => self.confirm_update_agents(),
+            _ => {}
+        }
+    }
+
+    fn confirm_update_agents(&mut self) {
+        if self.update_agents.is_empty() {
+            self.status = "select at least one agent".into();
+            return;
+        }
+        let agents = self.update_agents.clone();
+        self.update_jobs = self
+            .update_skills
             .iter()
+            .filter(|s| s.agents.iter().any(|a| agents.contains(a)))
             .map(|s| UpdateJob {
                 name: s.name.clone(),
                 scope: s.scope,
-                dirs: prefer_update_dirs(s),
+                dirs: prefer_update_dirs(s, &agents),
             })
             .collect();
-
+        if self.update_jobs.is_empty() {
+            self.status = "nothing to update for selected agents".into();
+            return;
+        }
         // If only one backend is installed, skip the picker.
         match (self.gh_available, self.npx_available) {
             (true, false) => self.queue_update(AddBackend::GhSkill),
@@ -838,12 +923,11 @@ impl App {
 
     fn handle_update_backend_key(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
+            KeyCode::Esc => {
                 self.update_jobs.clear();
-                self.update_suggested = None;
-                self.mode = Mode::List;
-                self.status = "update cancelled".into();
+                self.mode = Mode::UpdateAgents;
             }
+            KeyCode::Char('q') => self.cancel_update(),
             KeyCode::Char('1') | KeyCode::Char('g') => {
                 if self.gh_available {
                     self.queue_update(AddBackend::GhSkill);
@@ -877,6 +961,8 @@ impl App {
 
     fn queue_update(&mut self, backend: AddBackend) {
         let jobs = std::mem::take(&mut self.update_jobs);
+        self.update_skills.clear();
+        self.update_agents.clear();
         self.update_suggested = None;
         if jobs.is_empty() {
             self.mode = Mode::List;
@@ -895,6 +981,102 @@ impl App {
         self.message = crate::adapters::command::strip_ansi(&msg);
         self.mode = Mode::Message;
     }
+}
+
+fn toggle_agent(selected: &mut Vec<Agent>, agent: Agent) {
+    if let Some(pos) = selected.iter().position(|a| *a == agent) {
+        selected.remove(pos);
+    } else {
+        selected.push(agent);
+        selected.sort_by_key(|a| a.as_str());
+    }
+}
+
+fn select_all_agents(selected: &mut Vec<Agent>, available: &[Agent]) {
+    selected.clear();
+    selected.extend(available.iter().copied());
+}
+
+fn clear_all_agents(selected: &mut Vec<Agent>) {
+    selected.clear();
+}
+
+fn clamp_agent_focus(focus: &mut usize, available: &[Agent]) {
+    if available.is_empty() {
+        *focus = 0;
+    } else if *focus >= available.len() {
+        *focus = available.len() - 1;
+    }
+}
+
+fn move_agent_focus(focus: &mut usize, available: &[Agent], down: bool) {
+    if available.is_empty() {
+        *focus = 0;
+        return;
+    }
+    clamp_agent_focus(focus, available);
+    if down {
+        *focus = (*focus + 1) % available.len();
+    } else {
+        *focus = if *focus == 0 {
+            available.len() - 1
+        } else {
+            *focus - 1
+        };
+    }
+}
+
+/// Shared j/k / Space / * / x handling for agent checkbox lists.
+/// Returns true when the key was consumed.
+fn handle_agent_list_keys(
+    key: KeyEvent,
+    selected: &mut Vec<Agent>,
+    available: &[Agent],
+    focus: &mut usize,
+) -> bool {
+    clamp_agent_focus(focus, available);
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => {
+            move_agent_focus(focus, available, true);
+            true
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            move_agent_focus(focus, available, false);
+            true
+        }
+        KeyCode::Char(' ') => {
+            if let Some(agent) = available.get(*focus).copied() {
+                toggle_agent(selected, agent);
+            }
+            true
+        }
+        KeyCode::Char('*') => {
+            select_all_agents(selected, available);
+            true
+        }
+        KeyCode::Char('x') => {
+            clear_all_agents(selected);
+            true
+        }
+        _ => false,
+    }
+}
+
+fn union_agents<'a>(skills: impl Iterator<Item = &'a SkillRecord>) -> Vec<Agent> {
+    let mut agents = Vec::new();
+    for skill in skills {
+        for agent in &skill.agents {
+            if !agents.contains(agent) {
+                agents.push(*agent);
+            }
+        }
+    }
+    // Stable display order from Agent::all().
+    Agent::all()
+        .iter()
+        .copied()
+        .filter(|a| agents.contains(a))
+        .collect()
 }
 
 /// Thin test helper for filter/sort transitions without terminal.
@@ -1038,5 +1220,120 @@ mod tests {
         assert_eq!(app.checked_count(), 2);
         app.select_all_visible();
         assert_eq!(app.checked_count(), 0);
+    }
+
+    #[test]
+    fn toggle_agent_adds_and_removes() {
+        let mut selected = vec![Agent::Cursor];
+        toggle_agent(&mut selected, Agent::Codex);
+        assert_eq!(selected, vec![Agent::Codex, Agent::Cursor]);
+        toggle_agent(&mut selected, Agent::Cursor);
+        assert_eq!(selected, vec![Agent::Codex]);
+    }
+
+    #[test]
+    fn delete_agent_toggle_narrows_plans() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = sample_app();
+        app.skills[0].agents = vec![Agent::Cursor, Agent::ClaudeCode];
+        app.skills[0].locations = vec![
+            crate::model::SkillLocation {
+                agent: Agent::Cursor,
+                scope: Scope::User,
+                path: std::path::PathBuf::from("/tmp/alpha-cursor"),
+                kind: InstallKind::Copy,
+                resolved: None,
+            },
+            crate::model::SkillLocation {
+                agent: Agent::ClaudeCode,
+                scope: Scope::User,
+                path: std::path::PathBuf::from("/tmp/alpha-claude"),
+                kind: InstallKind::Copy,
+                resolved: None,
+            },
+        ];
+        app.recompute_view();
+        app.begin_delete();
+        assert_eq!(app.delete_agents, vec![Agent::Cursor, Agent::ClaudeCode]);
+        assert_eq!(app.delete_plans()[0].paths.len(), 2);
+        // j moves to claude-code, Space unchecks it.
+        app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.agent_focus, 1);
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.delete_agents, vec![Agent::Cursor]);
+        let plan = &app.delete_plans()[0];
+        assert_eq!(plan.agents, vec![Agent::Cursor]);
+        assert_eq!(plan.paths.len(), 1);
+    }
+
+    #[test]
+    fn add_agent_enter_requires_selection() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = sample_app();
+        app.mode = Mode::AddAgent;
+        app.add_agents.clear();
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.mode, Mode::AddAgent);
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.mode, Mode::AddScope);
+        assert_eq!(app.add_agents, vec![Agent::Cursor]);
+    }
+
+    #[test]
+    fn agent_star_and_x_select_clear_all() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = sample_app();
+        app.mode = Mode::AddAgent;
+        app.add_agents.clear();
+        app.handle_key(KeyEvent::new(KeyCode::Char('*'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.add_agents, Agent::all().to_vec());
+        app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE))
+            .unwrap();
+        assert!(app.add_agents.is_empty());
+    }
+
+    #[test]
+    fn update_starts_at_agent_selection() {
+        let mut app = sample_app();
+        app.gh_available = true;
+        app.npx_available = true;
+        app.skills[0].agents = vec![Agent::Cursor, Agent::Codex];
+        app.skills[0].locations = vec![crate::model::SkillLocation {
+            agent: Agent::Cursor,
+            scope: Scope::User,
+            path: std::path::PathBuf::from("/tmp/.cursor/skills/alpha"),
+            kind: InstallKind::Copy,
+            resolved: None,
+        }];
+        app.recompute_view();
+        app.begin_update();
+        assert_eq!(app.mode, Mode::UpdateAgents);
+        assert_eq!(app.update_agents, vec![Agent::Cursor, Agent::Codex]);
+        assert_eq!(app.agent_focus, 0);
+    }
+
+    #[test]
+    fn agent_jk_space_toggles_focused() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = sample_app();
+        app.mode = Mode::AddAgent;
+        app.add_agents = Agent::all().to_vec();
+        app.agent_focus = 0;
+        app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.agent_focus, 1);
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE))
+            .unwrap();
+        assert!(!app.add_agents.contains(&Agent::ClaudeCode));
+        app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.agent_focus, 0);
     }
 }

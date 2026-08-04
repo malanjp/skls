@@ -6,6 +6,14 @@
 
 形式は [Keep a Changelog](https://keepachangelog.com/ja/1.1.0/) に準拠し、バージョン付けは [Semantic Versioning](https://semver.org/lang/ja/) に従う。
 
+## [Unreleased]
+
+## [0.2.0] - 2026-08-04
+
+### 変更
+
+- 追加 / 削除 / 更新で対象エージェントをチェックボックス選択（`j`/`k`+`Space`、`*`=全選択、`x`=全解除、`Enter`で次へ）
+
 ## [0.1.0] - 2026-08-04
 
 **skls**（*skills list*）の初回リリース。
@@ -29,4 +37,6 @@
 - ログ照合はヒューリスティックであり、厳密なスキル実行回数ではない
 - `gh` / `npx` がなくても一覧と指標は動く。CLI 依存の操作だけ無効になる
 
+[Unreleased]: https://github.com/malanjp/skls/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/malanjp/skls/releases/tag/v0.2.0
 [0.1.0]: https://github.com/malanjp/skls/releases/tag/v0.1.0

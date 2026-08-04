@@ -1,6 +1,7 @@
 //! ratatui rendering for skls.
 
 use crate::app::{App, Mode};
+use crate::model::Agent;
 use crate::ops::AddBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -33,6 +34,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Mode::AddResults => draw_add_results_modal(frame, app),
         Mode::AddAgent => draw_add_agent_modal(frame, app),
         Mode::AddScope => draw_add_scope_modal(frame, app),
+        Mode::UpdateAgents => draw_update_agents_modal(frame, app),
         Mode::UpdateBackend => draw_update_backend_modal(frame, app),
         Mode::DeleteConfirm => draw_delete_modal(frame, app),
         Mode::List => {}
@@ -221,7 +223,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     };
     let text = match app.mode {
         Mode::DeleteConfirm => {
-            " [y]/Enter confirm  [n]/Esc cancel  [1]/[2]/[3] narrow  [0] all ".to_string()
+            " j/k  Space  */x all/none  [y]/Enter confirm  [n]/Esc ".to_string()
         }
         Mode::Help | Mode::Message => " Enter / Esc / q close ".to_string(),
         Mode::Busy => " working — please wait … ".to_string(),
@@ -230,10 +232,15 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         }
         Mode::Search => " type  Enter=apply  Esc=cancel ".to_string(),
         Mode::AddBackend => " [1] gh  [2] npx   Esc/q cancel ".to_string(),
-        Mode::UpdateBackend => " [1] gh  [2] npx  Enter=suggested  Esc cancel ".to_string(),
+        Mode::UpdateAgents => {
+            " j/k  Space  */x all/none  Enter=next  Esc/q ".to_string()
+        }
+        Mode::UpdateBackend => " [1] gh  [2] npx  Enter=suggested  Esc=back  q=cancel ".to_string(),
         Mode::AddQuery => " type  Enter=next  Esc=back  q=cancel ".to_string(),
         Mode::AddResults => " j/k select  Enter=next  Esc=back  q=cancel ".to_string(),
-        Mode::AddAgent => " [1]cursor [2]claude [3]codex  Esc=back ".to_string(),
+        Mode::AddAgent => {
+            " j/k  Space  */x all/none  Enter=next  Esc=back ".to_string()
+        }
         Mode::AddScope => " [p]project [u]user  Esc=back  q=cancel ".to_string(),
         Mode::List => format!(
             " j/k  Space/* /x select  / search  f filter  s sort  a add  d del  u upd  r/R refresh  ?  q{warn} "
@@ -276,15 +283,15 @@ Keys
   q         quit
 
 Update (u)
-  [1] gh skill   [2] npx skills
+  agents (j/k · Space · */x) → [1] gh skill / [2] npx skills
   Enter uses suggested backend
 
 Add (a)
-  backend → source → (gh results) → agent → scope
+  backend → source → (gh results) → agents (j/k · Space · */x) → scope
 
 Delete (d)
   [y] confirm   [n]/Esc cancel
-  [1]/[2]/[3] narrow agents   [0] all
+  j/k · Space toggle · * all · x none
 
 CLI sampling
   --max-sessions N   sessions/agent (default 80)
@@ -530,19 +537,18 @@ fn draw_add_agent_modal(frame: &mut Frame, app: &App) {
         AddBackend::GhSkill => 4,
         AddBackend::NpxSkills => 3,
     };
+    let toggles = format_agent_toggles(&app.add_agents, Agent::all(), app.agent_focus);
     let body = format!(
         "Add a skill  ·  {}\n\
          ────────────────────────\n\
-         Step {step} / {total}  ·  choose target agent\n\
+         Step {step} / {total}  ·  choose target agents\n\
          \n\
          Current\n\
            source   {}\n\
          \n\
-         [1]  cursor\n\
-         [2]  claude-code\n\
-         [3]  codex\n\
+         {toggles}\n\
          \n\
-         Keys  1/2/3=next · Esc=back · q=cancel",
+         Keys  j/k=move · Space=toggle · *=all · x=none · Enter=next · Esc=back · q=cancel",
         app.add_backend.as_str(),
         add_source_summary(app),
     );
@@ -555,6 +561,7 @@ fn draw_add_scope_modal(frame: &mut Frame, app: &App) {
         AddBackend::GhSkill => 5,
         AddBackend::NpxSkills => 4,
     };
+    let agents = agents_label(&app.add_agents);
     let body = format!(
         "Add a skill  ·  {}\n\
          ────────────────────────\n\
@@ -562,7 +569,7 @@ fn draw_add_scope_modal(frame: &mut Frame, app: &App) {
          \n\
          Current\n\
            source   {}\n\
-           agent    {}\n\
+           agents   {agents}\n\
          \n\
          [p]  project   this repository only\n\
          [u]  user      all projects for this user\n\
@@ -570,9 +577,38 @@ fn draw_add_scope_modal(frame: &mut Frame, app: &App) {
          Keys  p/u=run · Esc=back · q=cancel",
         app.add_backend.as_str(),
         add_source_summary(app),
-        app.add_agent.as_str(),
     );
     draw_add_panel(frame, &format!("add {step}/{total}"), body);
+}
+
+fn draw_update_agents_modal(frame: &mut Frame, app: &App) {
+    let available = app.update_available_agents();
+    let toggles = format_agent_toggles(&app.update_agents, &available, app.agent_focus);
+    let names: Vec<&str> = app
+        .update_skills
+        .iter()
+        .take(8)
+        .map(|s| s.name.as_str())
+        .collect();
+    let more = if app.update_skills.len() > 8 {
+        format!("\n  … and {} more", app.update_skills.len() - 8)
+    } else {
+        String::new()
+    };
+    let body = format!(
+        "Update skills\n\
+         ────────────────────────\n\
+         Choose target agents\n\
+         \n\
+         Targets\n\
+           {}{more}\n\
+         \n\
+         {toggles}\n\
+         \n\
+         Keys  j/k=move · Space=toggle · *=all · x=none · Enter=next · Esc/q=cancel",
+        names.join("\n  "),
+    );
+    draw_panel(frame, "update · agents", body, Color::Cyan);
 }
 
 fn draw_update_backend_modal(frame: &mut Frame, app: &App) {
@@ -622,19 +658,18 @@ fn draw_update_backend_modal(frame: &mut Frame, app: &App) {
 
 fn draw_delete_modal(frame: &mut Frame, app: &App) {
     let plans = app.delete_plans();
+    let available = app.delete_available_agents();
+    let toggles = format_agent_toggles(&app.delete_agents, &available, app.agent_focus);
     let body = if plans.is_empty() {
-        "Nothing to delete.\n\
-         Press [0] for all agents, or Esc to cancel."
-            .into()
+        format!(
+            "Nothing to delete.\n\
+             \n\
+             {toggles}\n\
+             \n\
+             Keys  j/k · Space · *=all · x=none · Esc=cancel"
+        )
     } else {
-        let filter = match &app.delete_agent_filter {
-            Some(agents) => agents
-                .iter()
-                .map(|a| a.as_str())
-                .collect::<Vec<_>>()
-                .join(","),
-            None => "all".into(),
-        };
+        let filter = agents_label(&app.delete_agents);
         let mut lines = Vec::new();
         lines.push("Delete skills".into());
         lines.push("────────────────────────".into());
@@ -648,6 +683,11 @@ fn draw_delete_modal(frame: &mut Frame, app: &App) {
                 "Target  {} skills   agents: {filter}",
                 plans.len()
             ));
+        }
+        lines.push(String::new());
+        lines.push("Agents".into());
+        for line in toggles.lines() {
+            lines.push(format!("  {line}"));
         }
         lines.push(String::new());
         lines.push("Skills".into());
@@ -698,11 +738,39 @@ fn draw_delete_modal(frame: &mut Frame, app: &App) {
         }
         lines.push(String::new());
         lines.push(
-            "Keys  [y]/Enter=delete · [n]/Esc=cancel · [1]/[2]/[3]=narrow · [0]=all".into(),
+            "Keys  j/k=move · Space=toggle · *=all · x=none · [y]/Enter=delete · [n]/Esc".into(),
         );
         lines.join("\n")
     };
     draw_panel(frame, "confirm delete", body, Color::Yellow);
+}
+
+fn format_agent_toggles(selected: &[Agent], available: &[Agent], focus: usize) -> String {
+    if available.is_empty() {
+        return "  (no agents)".into();
+    }
+    available
+        .iter()
+        .enumerate()
+        .map(|(i, agent)| {
+            let cursor = if i == focus { '>' } else { ' ' };
+            let mark = if selected.contains(agent) { 'x' } else { ' ' };
+            format!("{cursor} [{mark}]  {}", agent.as_str())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn agents_label(agents: &[Agent]) -> String {
+    if agents.is_empty() {
+        "(none)".into()
+    } else {
+        agents
+            .iter()
+            .map(|a| a.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
 }
 
 fn centered(area: Rect, percent_x: u16, percent_y: u16) -> Rect {

@@ -7,6 +7,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.2.0] - 2026-08-04
+
+### Changed
+
+- Add / delete / update: pick target agents with checkbox toggles (`j`/`k` + `Space`; `*` = all, `x` = none; `Enter` to continue)
+
 ## [0.1.0] - 2026-08-04
 
 Initial release of **skls** (*skills list*).
@@ -30,4 +38,6 @@ Initial release of **skls** (*skills list*).
 - Log matching is heuristic, not a precise skill-execution count
 - Listing and metrics work without `gh` / `npx`; only CLI-dependent actions are disabled
 
+[Unreleased]: https://github.com/malanjp/skls/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/malanjp/skls/releases/tag/v0.2.0
 [0.1.0]: https://github.com/malanjp/skls/releases/tag/v0.1.0
