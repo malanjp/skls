@@ -3,10 +3,10 @@
 use crate::adapters::command::CommandRunner;
 use crate::adapters::gh_skill::GhSkillCli;
 use crate::adapters::npx_skills::NpxSkillsCli;
-use crate::model::{Agent, Scope, SkillRecord};
+use crate::model::{Agent, InstallSource, Scope, SkillRecord};
 use anyhow::{anyhow, Context, Result};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AddBackend {
@@ -148,14 +148,185 @@ pub fn execute_add(
     }
 }
 
-pub fn execute_update(runner: &impl CommandRunner, skill: &str) -> Result<String> {
+#[derive(Debug, Clone)]
+pub struct UpdateJob {
+    pub name: String,
+    pub scope: Scope,
+    pub dirs: Vec<PathBuf>,
+}
+
+pub fn execute_update(
+    runner: &impl CommandRunner,
+    backend: AddBackend,
+    jobs: &[UpdateJob],
+) -> Result<String> {
+    match backend {
+        AddBackend::GhSkill => execute_update_gh(runner, jobs),
+        AddBackend::NpxSkills => execute_update_npx(runner, jobs),
+    }
+}
+
+fn execute_update_npx(runner: &impl CommandRunner, jobs: &[UpdateJob]) -> Result<String> {
+    let cli = NpxSkillsCli { runner };
+    let mut msgs = Vec::new();
+    for scope in [Scope::User, Scope::Project] {
+        let names: Vec<&str> = jobs
+            .iter()
+            .filter(|j| j.scope == scope)
+            .map(|j| j.name.as_str())
+            .collect();
+        if names.is_empty() {
+            continue;
+        }
+        let out = cli.update(&names, scope)?;
+        msgs.push(format!(
+            "npx skills update ({scope})\n{}\n{}",
+            out.stdout.trim(),
+            out.stderr.trim()
+        ));
+    }
+    if msgs.is_empty() {
+        return Err(anyhow!("no skills to update via npx"));
+    }
+    Ok(msgs.join("\n\n"))
+}
+
+fn execute_update_gh(runner: &impl CommandRunner, jobs: &[UpdateJob]) -> Result<String> {
     let cli = GhSkillCli { runner };
-    let out = cli.update(skill)?;
-    Ok(format!(
-        "gh skill update ok\n{}\n{}",
-        out.stdout.trim(),
-        out.stderr.trim()
-    ))
+    let mut msgs = Vec::new();
+    for job in jobs {
+        let mut attempts: Vec<String> = Vec::new();
+        let mut try_dirs: Vec<Option<&Path>> =
+            job.dirs.iter().map(|d| Some(d.as_path())).collect();
+        if try_dirs.is_empty() {
+            try_dirs.push(None);
+        }
+
+        let mut done = false;
+        for dir in try_dirs {
+            match cli.update(&job.name, dir) {
+                Ok(out) => {
+                    let dir_note = dir
+                        .map(|d| format!("\n(dir: {})", d.display()))
+                        .unwrap_or_default();
+                    let body = format!(
+                        "gh skill update {}{dir_note}\n{}\n{}",
+                        job.name,
+                        out.stdout.trim(),
+                        out.stderr.trim()
+                    );
+                    let missing = body.contains("none of the specified skills are installed");
+                    if missing {
+                        attempts.push(body);
+                        continue;
+                    }
+                    msgs.push(body);
+                    done = true;
+                    break;
+                }
+                Err(err) => {
+                    attempts.push(format!(
+                        "dir {}: {err}",
+                        dir.map(|d| d.display().to_string())
+                            .unwrap_or_else(|| "(default)".into())
+                    ));
+                }
+            }
+        }
+        if !done {
+            msgs.push(format!(
+                "update {} failed after {} attempt(s):\n{}",
+                job.name,
+                attempts.len(),
+                attempts.join("\n---\n")
+            ));
+        }
+    }
+    Ok(msgs.join("\n\n"))
+}
+
+/// Best-effort backend guess for the update picker.
+pub fn suggested_update_backend(skill: &SkillRecord) -> Option<AddBackend> {
+    if skill.source == InstallSource::Gh || skill_has_gh_metadata(skill) {
+        return Some(AddBackend::GhSkill);
+    }
+    if skill.source == InstallSource::Npx {
+        return Some(AddBackend::NpxSkills);
+    }
+    let only_agents = !skill.locations.is_empty()
+        && skill.locations.iter().all(|l| {
+            let p = l.resolved.as_ref().unwrap_or(&l.path);
+            p.to_string_lossy().contains("/.agents/skills")
+        });
+    if only_agents {
+        return Some(AddBackend::NpxSkills);
+    }
+    None
+}
+
+pub fn suggested_update_backend_for(skills: &[SkillRecord]) -> Option<AddBackend> {
+    let mut iter = skills.iter().map(suggested_update_backend);
+    let first = iter.next()??;
+    for next in iter {
+        match next {
+            Some(b) if b == first => {}
+            _ => return None,
+        }
+    }
+    Some(first)
+}
+
+fn skill_has_gh_metadata(skill: &SkillRecord) -> bool {
+    skill.locations.iter().any(|l| skill_path_has_github_metadata(&l.path))
+}
+
+/// Ordered skill-root dirs for `gh skill update --dir`, preferring copies
+/// that already carry GitHub metadata in SKILL.md.
+pub fn prefer_update_dirs(skill: &SkillRecord) -> Vec<PathBuf> {
+    let score = |path: &Path| -> i32 {
+        let s = path.to_string_lossy();
+        let mut n = if s.contains("/.agents/skills") {
+            0
+        } else if s.contains("/.cursor/skills")
+            || s.contains("/.claude/skills")
+            || s.contains("/.codex/skills")
+        {
+            2
+        } else {
+            1
+        };
+        if skill_path_has_github_metadata(path) {
+            n += 10;
+        }
+        n
+    };
+    let mut scored: Vec<(i32, PathBuf)> = skill
+        .locations
+        .iter()
+        .filter_map(|l| {
+            let parent = l.path.parent()?.to_path_buf();
+            Some((score(&l.path), parent))
+        })
+        .collect();
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    let mut out = Vec::new();
+    for (_, dir) in scored {
+        if !out.contains(&dir) {
+            out.push(dir);
+        }
+    }
+    out
+}
+
+fn skill_path_has_github_metadata(skill_dir: &Path) -> bool {
+    let md = skill_dir.join("SKILL.md");
+    let Ok(content) = fs::read_to_string(md) else {
+        return false;
+    };
+    let lower = content.to_lowercase();
+    lower.contains("github-repo:")
+        || lower.contains("sourceurl:")
+        || lower.contains("source_url:")
 }
 
 pub fn require_cli(name: &str) -> Result<()> {
@@ -209,5 +380,87 @@ mod tests {
         remove_skill_path(&link).unwrap();
         assert!(!link.exists());
         assert!(target.exists());
+    }
+
+    #[test]
+    fn suggested_backend_prefers_gh_metadata_over_npx_lock_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cursor = tmp.path().join(".cursor/skills/tdd");
+        fs::create_dir_all(&cursor).unwrap();
+        fs::write(
+            cursor.join("SKILL.md"),
+            "---\nname: tdd\nmetadata:\n  github-repo: https://github.com/ex/skills\n  github-tree-sha: abc\n---\n",
+        )
+        .unwrap();
+        let skill = SkillRecord {
+            id: "tdd".into(),
+            name: "tdd".into(),
+            description: String::new(),
+            scope: Scope::User,
+            agents: vec![Agent::Cursor],
+            locations: vec![SkillLocation {
+                agent: Agent::Cursor,
+                scope: Scope::User,
+                path: cursor,
+                kind: InstallKind::Copy,
+                resolved: None,
+            }],
+            install_kind: InstallKind::Copy,
+            source: InstallSource::Npx,
+            source_url: Some("https://github.com/mattpocock/skills.git".into()),
+            version: None,
+            pinned: false,
+            stats: SkillStats::default(),
+        };
+        assert_eq!(
+            suggested_update_backend(&skill),
+            Some(AddBackend::GhSkill)
+        );
+    }
+
+    #[test]
+    fn prefer_update_dirs_puts_metadata_host_first() {
+        let tmp = tempfile::tempdir().unwrap();
+        let claude = tmp.path().join(".claude/skills/tdd");
+        let cursor = tmp.path().join(".cursor/skills/tdd");
+        fs::create_dir_all(&claude).unwrap();
+        fs::create_dir_all(&cursor).unwrap();
+        fs::write(claude.join("SKILL.md"), "---\nname: tdd\n---\n").unwrap();
+        fs::write(
+            cursor.join("SKILL.md"),
+            "---\nname: tdd\nmetadata:\n  github-repo: https://github.com/ex/skills\n---\n",
+        )
+        .unwrap();
+        let skill = SkillRecord {
+            id: "tdd".into(),
+            name: "tdd".into(),
+            description: String::new(),
+            scope: Scope::User,
+            agents: vec![Agent::ClaudeCode, Agent::Cursor],
+            locations: vec![
+                SkillLocation {
+                    agent: Agent::ClaudeCode,
+                    scope: Scope::User,
+                    path: claude,
+                    kind: InstallKind::Copy,
+                    resolved: None,
+                },
+                SkillLocation {
+                    agent: Agent::Cursor,
+                    scope: Scope::User,
+                    path: cursor.clone(),
+                    kind: InstallKind::Copy,
+                    resolved: None,
+                },
+            ],
+            install_kind: InstallKind::Copy,
+            source: InstallSource::Gh,
+            source_url: Some("https://github.com/ex/skills".into()),
+            version: None,
+            pinned: false,
+            stats: SkillStats::default(),
+        };
+        let dirs = prefer_update_dirs(&skill);
+        assert_eq!(dirs[0], cursor.parent().unwrap());
     }
 }

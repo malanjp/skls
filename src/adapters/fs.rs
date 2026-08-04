@@ -27,6 +27,14 @@ struct Frontmatter {
     source_url: Option<String>,
     version: Option<String>,
     pinned: Option<bool>,
+    #[serde(default)]
+    metadata: Option<SkillMetadata>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillMetadata {
+    #[serde(rename = "github-repo", default)]
+    github_repo: Option<String>,
 }
 
 /// Paths relative to project root / home for each agent.
@@ -68,7 +76,11 @@ pub fn parse_skill_md(content: &str) -> Result<(String, String, Option<String>, 
         .clone()
         .unwrap_or_else(|| "unnamed".to_string());
     let description = fm.description.unwrap_or_default();
-    let source_url = fm.source_url.or(fm.source);
+    let meta_repo = fm
+        .metadata
+        .as_ref()
+        .and_then(|m| m.github_repo.clone());
+    let source_url = fm.source_url.or(fm.source).or(meta_repo);
     let version = fm.version;
     let pinned = fm.pinned.unwrap_or(false);
     Ok((name, description, source_url, version, pinned))
@@ -84,6 +96,7 @@ fn extract_frontmatter(content: &str) -> Result<Frontmatter> {
             source_url: None,
             version: None,
             pinned: None,
+            metadata: None,
         });
     }
     let rest = &trimmed[3..];
@@ -106,9 +119,11 @@ fn parse_frontmatter_lenient(yaml: &str) -> Frontmatter {
         source_url: None,
         version: None,
         pinned: None,
+        metadata: None,
     };
     for line in yaml.lines() {
-        let line = line.trim();
+        let raw = line.trim_end();
+        let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
@@ -126,6 +141,12 @@ fn parse_frontmatter_lenient(yaml: &str) -> Frontmatter {
             "description" => fm.description = Some(value),
             "source" => fm.source = Some(value),
             "sourceURL" | "source_url" => fm.source_url = Some(value),
+            "github-repo" => {
+                let meta = fm.metadata.get_or_insert(SkillMetadata {
+                    github_repo: None,
+                });
+                meta.github_repo = Some(value);
+            }
             "version" => fm.version = Some(value),
             "pinned" => {
                 fm.pinned = Some(matches!(
@@ -312,6 +333,25 @@ description: Use this when: you need colons
         let (name, desc, _, _, _) = parse_skill_md(content).unwrap();
         assert_eq!(name, "weird");
         assert!(desc.contains("colons"));
+    }
+
+    #[test]
+    fn parse_frontmatter_github_repo_metadata() {
+        let content = r#"---
+name: tdd
+description: Test-driven development
+metadata:
+    github-path: skills/engineering/tdd
+    github-repo: https://github.com/mattpocock/skills
+    github-tree-sha: abc123
+---
+"#;
+        let (name, _, source_url, _, _) = parse_skill_md(content).unwrap();
+        assert_eq!(name, "tdd");
+        assert_eq!(
+            source_url.as_deref(),
+            Some("https://github.com/mattpocock/skills")
+        );
     }
 
     #[test]

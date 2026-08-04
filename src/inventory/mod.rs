@@ -2,6 +2,7 @@
 
 use crate::adapters::fs::{scan_skills, DiscoveredSkill};
 use crate::adapters::gh_skill::{GhSkillCli, GhSkillListItem};
+use crate::adapters::skill_lock::{load_locks, SkillLock};
 use crate::adapters::CommandRunner;
 use crate::model::{
     Agent, InstallKind, InstallSource, Scope, SkillLocation, SkillRecord, SkillStats,
@@ -25,6 +26,11 @@ pub fn build_inventory(
     let (discovered, scan_warnings) = scan_skills(project_root, home)?;
     warnings.extend(scan_warnings);
     let mut records = merge_discovered(discovered);
+
+    // Fast path: npx skills lockfile (no process spawn).
+    for (scope, lock) in load_locks(project_root, home) {
+        enrich_with_skill_lock(&mut records, &lock, scope);
+    }
 
     if opts.use_gh {
         let cli = GhSkillCli { runner };
@@ -95,39 +101,93 @@ pub fn enrich_with_gh(records: &mut [SkillRecord], items: &[GhSkillListItem]) {
             "user" => Scope::User,
             _ => continue,
         };
-        let id = normalize_id(&item.skill_name, &item.skill_name);
         if let Some(rec) = records
             .iter_mut()
-            .find(|r| r.scope == scope && (r.id == id || r.name == item.skill_name))
+            .find(|r| gh_item_matches(r, item, scope))
         {
-            if !item.source_url.is_empty() {
-                rec.source_url = Some(item.source_url.clone());
-                rec.source = InstallSource::Gh;
-            }
-            if !item.version.is_empty() {
-                rec.version = Some(item.version.clone());
-            }
-            rec.pinned = item.pinned;
-            for host in &item.agent_hosts {
-                if let Some(agent) = Agent::parse(host) {
-                    if !rec.agents.contains(&agent) {
-                        rec.agents.push(agent);
-                    }
-                    if !rec.locations.iter().any(|l| l.agent == agent) && !item.path.is_empty()
-                    {
-                        rec.locations.push(SkillLocation {
-                            agent,
-                            scope,
-                            path: item.path.clone().into(),
-                            kind: InstallKind::Unknown,
-                            resolved: None,
-                        });
-                    }
-                }
-            }
-            rec.agents.sort_by_key(|a| a.as_str());
+            apply_gh_item(rec, item, scope);
         }
     }
+}
+
+fn gh_item_matches(rec: &SkillRecord, item: &GhSkillListItem, scope: Scope) -> bool {
+    if rec.scope != scope {
+        return false;
+    }
+    let leaf = item
+        .skill_name
+        .rsplit('/')
+        .next()
+        .unwrap_or(&item.skill_name);
+    let full_id = normalize_id(&item.skill_name, &item.skill_name);
+    let leaf_id = normalize_id(leaf, leaf);
+    if rec.id == full_id
+        || rec.id == leaf_id
+        || rec.name == item.skill_name
+        || rec.name == leaf
+    {
+        return true;
+    }
+    if item.path.is_empty() {
+        return false;
+    }
+    let item_path = std::path::PathBuf::from(&item.path);
+    rec.locations.iter().any(|l| {
+        l.path == item_path
+            || l.resolved.as_ref() == Some(&item_path)
+            || (l.path.file_name().is_some() && l.path.file_name() == item_path.file_name())
+    })
+}
+
+pub fn enrich_with_skill_lock(records: &mut [SkillRecord], lock: &SkillLock, scope: Scope) {
+    for rec in records.iter_mut() {
+        if rec.scope != scope {
+            continue;
+        }
+        let entry = lock
+            .skills
+            .get(&rec.name)
+            .or_else(|| lock.skills.get(&rec.id));
+        let Some(entry) = entry else {
+            continue;
+        };
+        // Don't override stronger gh provenance with lock membership alone.
+        if rec.source == InstallSource::Manual {
+            rec.source = InstallSource::Npx;
+        }
+        if rec.source_url.is_none() && !entry.source_url.is_empty() {
+            rec.source_url = Some(entry.source_url.clone());
+        }
+    }
+}
+
+fn apply_gh_item(rec: &mut SkillRecord, item: &GhSkillListItem, scope: Scope) {
+    // Prefer non-empty provenance; never clobber an existing URL with empty.
+    if !item.source_url.is_empty() {
+        rec.source_url = Some(item.source_url.clone());
+        rec.source = InstallSource::Gh;
+    }
+    if !item.version.is_empty() {
+        rec.version = Some(item.version.clone());
+    }
+    rec.pinned = rec.pinned || item.pinned;
+    for host in &item.agent_hosts {
+        if let Some(agent) = Agent::parse(host) {
+            if !rec.agents.contains(&agent) {
+                rec.agents.push(agent);
+            }
+            if !rec.locations.iter().any(|l| l.agent == agent) && !item.path.is_empty() {
+                rec.locations.push(SkillLocation {
+                    agent,
+                    scope,
+                    path: item.path.clone().into(),
+                    kind: InstallKind::Unknown,
+                    resolved: None,
+                });
+            }
+        }
+    }
+    rec.agents.sort_by_key(|a| a.as_str());
 }
 
 fn normalize_id(id: &str, name: &str) -> String {
@@ -137,6 +197,7 @@ fn normalize_id(id: &str, name: &str) -> String {
 
 fn infer_source(d: &DiscoveredSkill) -> InstallSource {
     if d.source_url.as_deref().is_some_and(|u| !u.is_empty()) {
+        // github-repo / sourceURL in SKILL.md is the gh-skill metadata shape.
         InstallSource::Gh
     } else {
         InstallSource::Manual
@@ -212,5 +273,86 @@ mod tests {
         assert_eq!(records[0].source, InstallSource::Gh);
         assert_eq!(records[0].version.as_deref(), Some("v2"));
         assert!(records[0].pinned);
+    }
+
+    #[test]
+    fn enrich_skill_lock_marks_npx_without_overriding_gh() {
+        let mut records = merge_discovered(vec![
+            disc("find-skills", Agent::ClaudeCode, Scope::User),
+            {
+                let mut d = disc("tdd", Agent::Cursor, Scope::User);
+                d.source_url = Some("https://github.com/ex/skills".into());
+                d
+            },
+        ]);
+        let mut lock = SkillLock::default();
+        lock.skills.insert(
+            "find-skills".into(),
+            crate::adapters::skill_lock::SkillLockEntry {
+                source: "vercel-labs/skills".into(),
+                source_url: "https://github.com/vercel-labs/skills.git".into(),
+                source_type: "github".into(),
+            },
+        );
+        lock.skills.insert(
+            "tdd".into(),
+            crate::adapters::skill_lock::SkillLockEntry {
+                source: "mattpocock/skills".into(),
+                source_url: "https://github.com/mattpocock/skills.git".into(),
+                source_type: "github".into(),
+            },
+        );
+        enrich_with_skill_lock(&mut records, &lock, Scope::User);
+        let find = records.iter().find(|r| r.name == "find-skills").unwrap();
+        let tdd = records.iter().find(|r| r.name == "tdd").unwrap();
+        assert_eq!(find.source, InstallSource::Npx);
+        assert_eq!(tdd.source, InstallSource::Gh);
+    }
+
+    #[test]
+    fn enrich_matches_prefixed_gh_skill_name_by_path() {
+        let mut records = merge_discovered(vec![DiscoveredSkill {
+            id: "tdd".into(),
+            name: "tdd".into(),
+            description: String::new(),
+            location: SkillLocation {
+                agent: Agent::Cursor,
+                scope: Scope::User,
+                path: PathBuf::from("/home/.cursor/skills/tdd"),
+                kind: InstallKind::Copy,
+                resolved: None,
+            },
+            source_url: None,
+            version: None,
+            pinned: false,
+        }]);
+        enrich_with_gh(
+            &mut records,
+            &[
+                GhSkillListItem {
+                    skill_name: "tdd".into(),
+                    path: "/home/.agents/skills/tdd".into(),
+                    scope: "user".into(),
+                    source_url: String::new(),
+                    version: String::new(),
+                    pinned: false,
+                    agent_hosts: vec!["universal".into()],
+                },
+                GhSkillListItem {
+                    skill_name: "engineering/tdd".into(),
+                    path: "/home/.cursor/skills/tdd".into(),
+                    scope: "user".into(),
+                    source_url: "https://github.com/ex/skills".into(),
+                    version: "v1".into(),
+                    pinned: false,
+                    agent_hosts: vec!["cursor".into()],
+                },
+            ],
+        );
+        assert_eq!(
+            records[0].source_url.as_deref(),
+            Some("https://github.com/ex/skills")
+        );
+        assert_eq!(records[0].source, InstallSource::Gh);
     }
 }

@@ -13,7 +13,8 @@ pub struct GhSkillListItem {
     pub path: String,
     #[serde(default)]
     pub scope: String,
-    #[serde(default)]
+    /// gh emits `sourceURL` (URL capitalized), not camelCase `sourceUrl`.
+    #[serde(default, rename = "sourceURL", alias = "sourceUrl")]
     pub source_url: String,
     #[serde(default)]
     pub version: String,
@@ -129,10 +130,21 @@ impl<'a, R: CommandRunner> GhSkillCli<'a, R> {
         Ok(out)
     }
 
-    pub fn update(&self, skill: &str) -> Result<CommandOutput> {
-        let out = self
-            .runner
-            .run("gh", &["skill", "update", skill, "--all"])?;
+    pub fn update(&self, skill: &str, dir: Option<&std::path::Path>) -> Result<CommandOutput> {
+        let mut args = vec![
+            "skill".to_string(),
+            "update".to_string(),
+            skill.to_string(),
+            "--all".to_string(),
+        ];
+        if let Some(dir) = dir {
+            // Scope the scan so we hit the host copy that has GitHub metadata,
+            // not a sibling install under ~/.agents/skills without provenance.
+            args.push("--dir".to_string());
+            args.push(dir.display().to_string());
+        }
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let out = self.runner.run("gh", &arg_refs)?;
         if !out.success() {
             return Err(anyhow!(
                 "gh skill update failed ({}): {}",
@@ -170,6 +182,7 @@ mod tests {
         let items = cli.list(Some(Scope::User), Some(Agent::Cursor)).unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].skill_name, "tdd");
+        assert_eq!(items[0].source_url, "https://x");
         let calls = runner.calls();
         assert_eq!(calls[0].0, "gh");
         assert!(calls[0].1.contains(&"--scope".into()));

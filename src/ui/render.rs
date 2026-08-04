@@ -32,6 +32,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Mode::AddResults => draw_add_results_modal(frame, app),
         Mode::AddAgent => draw_add_agent_modal(frame),
         Mode::AddScope => draw_add_scope_modal(frame),
+        Mode::UpdateBackend => draw_update_backend_modal(frame, app),
         Mode::DeleteConfirm => draw_delete_modal(frame, app),
         Mode::List => {}
     }
@@ -208,6 +209,9 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Mode::Filter => " p/u/a scope  1/2/3/0 agents  c clear  Esc back ".to_string(),
         Mode::Search => format!(" /{}  Enter apply  Esc cancel ", app.input),
         Mode::AddBackend => " 1/g gh skill  2/n npx skills  Esc cancel ".to_string(),
+        Mode::UpdateBackend => {
+            " 1/g gh skill  2/n npx skills  Enter suggested  Esc cancel ".to_string()
+        }
         Mode::AddQuery => format!(" query> {}  Enter  Esc cancel ", app.input),
         Mode::AddResults => " j/k select  Enter  Esc cancel ".to_string(),
         Mode::AddAgent => " 1 cursor  2 claude-code  3 codex  Esc cancel ".to_string(),
@@ -228,9 +232,12 @@ Keys
   j/k  move          /  search
   f    filter        s  cycle sort
   a    add skill     d  delete (selection or row)
-  u    gh update     r  light refresh
+  u    update        r  light refresh
   R    recompute activation stats
   ?    help          q  quit
+
+Update
+  pick gh skill or npx skills (Enter = suggested)
 
 Multi-select
   Space        toggle row
@@ -309,6 +316,36 @@ fn draw_add_backend_modal(frame: &mut Frame) {
     let text = "Add skill — choose backend\n\n1 / g  gh skill\n2 / n  npx skills\n\nEsc cancel";
     let p = Paragraph::new(text)
         .block(Block::default().borders(Borders::ALL).title(" add "));
+    frame.render_widget(p, area);
+}
+
+fn draw_update_backend_modal(frame: &mut Frame, app: &App) {
+    let area = centered(frame.area(), 60, 45);
+    frame.render_widget(Clear, area);
+    let names: Vec<&str> = app
+        .update_jobs
+        .iter()
+        .take(8)
+        .map(|j| j.name.as_str())
+        .collect();
+    let more = if app.update_jobs.len() > 8 {
+        format!("\n  … and {} more", app.update_jobs.len() - 8)
+    } else {
+        String::new()
+    };
+    let suggested = match app.update_suggested {
+        Some(b) => format!("suggested: {}  (Enter)", b.as_str()),
+        None => "suggested: (none — pick manually)".into(),
+    };
+    let text = format!(
+        "Update — choose backend\n\n{suggested}\n\nskills:\n  {}{more}\n\n1 / g  gh skill{}\n2 / n  npx skills{}\n\nEsc cancel",
+        names.join("\n  "),
+        if app.gh_available { "" } else { "  (missing)" },
+        if app.npx_available { "" } else { "  (missing)" },
+    );
+    let p = Paragraph::new(text)
+        .wrap(Wrap { trim: false })
+        .block(Block::default().borders(Borders::ALL).title(" update "));
     frame.render_widget(p, area);
 }
 

@@ -65,6 +65,28 @@ impl<'a, R: CommandRunner> NpxSkillsCli<'a, R> {
         let out = self.runner.run("npx", &["skills", "find", query])?;
         Ok(out)
     }
+
+    pub fn update(&self, skills: &[&str], scope: Scope) -> Result<CommandOutput> {
+        let mut args = vec!["skills".to_string(), "update".to_string()];
+        for skill in skills {
+            args.push((*skill).to_string());
+        }
+        args.push("-y".to_string());
+        match scope {
+            Scope::User => args.push("-g".to_string()),
+            Scope::Project => args.push("-p".to_string()),
+        }
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let out = self.runner.run("npx", &arg_refs)?;
+        if !out.success() {
+            return Err(anyhow!(
+                "npx skills update failed ({}): {}",
+                out.status,
+                out.stderr.trim()
+            ));
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -84,5 +106,23 @@ mod tests {
         let args = &runner.calls()[0].1;
         assert!(args.contains(&"-g".into()));
         assert!(args.contains(&"claude-code".into()));
+    }
+
+    #[test]
+    fn update_uses_global_flag_for_user_scope() {
+        let runner = FakeCommandRunner::with_responses(vec![CommandOutput {
+            status: 0,
+            stdout: "updated".into(),
+            stderr: String::new(),
+        }]);
+        let cli = NpxSkillsCli { runner: &runner };
+        cli.update(&["find-skills", "tdd"], Scope::User).unwrap();
+        let args = &runner.calls()[0].1;
+        assert_eq!(args[0], "skills");
+        assert_eq!(args[1], "update");
+        assert!(args.contains(&"find-skills".into()));
+        assert!(args.contains(&"tdd".into()));
+        assert!(args.contains(&"-g".into()));
+        assert!(args.contains(&"-y".into()));
     }
 }

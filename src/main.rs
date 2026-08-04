@@ -159,25 +159,26 @@ fn run_pending_action(
                 Err(err) => app.show_message(format!("{body}\n\nrefresh failed: {err}")),
             }
         }
-        PendingAction::Update(names) => {
-            let label = if names.len() == 1 {
-                format!("Updating '{}' …", names[0])
+        PendingAction::Update { backend, jobs } => {
+            let label = if jobs.len() == 1 {
+                format!("Updating '{}' via {} …", jobs[0].name, backend.as_str())
             } else {
-                format!("Updating {} skills …", names.len())
+                format!(
+                    "Updating {} skills via {} …",
+                    jobs.len(),
+                    backend.as_str()
+                )
             };
             app.set_busy(label);
             terminal.draw(|f| draw(f, app))?;
 
             let runner = SystemCommandRunner;
-            let mut msgs = Vec::new();
-            for name in &names {
-                match execute_update(&runner, name) {
-                    Ok(m) => msgs.push(m),
-                    Err(err) => msgs.push(format!("update {name} failed: {err}")),
-                }
-            }
+            let msg = match execute_update(&runner, backend, &jobs) {
+                Ok(m) => m,
+                Err(err) => format!("update failed: {err}"),
+            };
             let _ = app.reload_light();
-            app.show_message(msgs.join("\n\n"));
+            app.show_message(msg);
         }
         PendingAction::AnalyzeActivations => {
             app.set_busy("Analyzing activations (recent sessions) …");

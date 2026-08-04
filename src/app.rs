@@ -7,7 +7,10 @@ use crate::analytics::{
 };
 use crate::inventory::{build_inventory, InventoryOptions};
 use crate::model::{Agent, Scope, SkillFilters, SkillRecord, SortKey};
-use crate::ops::{execute_add, plan_delete, AddBackend, DeletePlan};
+use crate::ops::{
+    execute_add, plan_delete, prefer_update_dirs, suggested_update_backend_for, AddBackend,
+    DeletePlan, UpdateJob,
+};
 use anyhow::Result;
 use chrono::Utc;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -33,6 +36,7 @@ pub enum Mode {
     AddResults,
     AddAgent,
     AddScope,
+    UpdateBackend,
     DeleteConfirm,
     Message,
     Busy,
@@ -41,7 +45,10 @@ pub enum Mode {
 #[derive(Debug, Clone)]
 pub enum PendingAction {
     Delete(Vec<DeletePlan>),
-    Update(Vec<String>),
+    Update {
+        backend: AddBackend,
+        jobs: Vec<UpdateJob>,
+    },
     /// Compute activation stats after the inventory is already on screen.
     AnalyzeActivations,
 }
@@ -66,6 +73,9 @@ pub struct App {
     pub gh_available: bool,
     pub npx_available: bool,
     pub add_backend: AddBackend,
+    /// Targets waiting for update-backend selection.
+    pub update_jobs: Vec<UpdateJob>,
+    pub update_suggested: Option<AddBackend>,
     pub add_query: String,
     pub add_results: Vec<GhSkillSearchItem>,
     pub add_result_idx: usize,
@@ -117,6 +127,8 @@ impl App {
             } else {
                 AddBackend::NpxSkills
             },
+            update_jobs: Vec::new(),
+            update_suggested: None,
             add_query: String::new(),
             add_results: Vec::new(),
             add_result_idx: 0,
@@ -424,6 +436,7 @@ impl App {
             Mode::AddResults => self.handle_add_results_key(key),
             Mode::AddAgent => self.handle_add_agent_key(key),
             Mode::AddScope => self.handle_add_scope_key(key)?,
+            Mode::UpdateBackend => self.handle_update_backend_key(key),
             Mode::DeleteConfirm => self.handle_delete_key(key)?,
         }
         Ok(())
@@ -475,7 +488,7 @@ impl App {
             KeyCode::Char('*') => self.select_all_visible(),
             KeyCode::Char('x') => self.clear_checked(),
             KeyCode::Char('d') => self.begin_delete(),
-            KeyCode::Char('u') => self.run_update()?,
+            KeyCode::Char('u') => self.begin_update(),
             KeyCode::Char('?') => self.mode = Mode::Help,
             _ => {}
         }
@@ -754,36 +767,90 @@ impl App {
         Ok(())
     }
 
-    fn run_update(&mut self) -> Result<()> {
+    fn begin_update(&mut self) {
+        if !self.gh_available && !self.npx_available {
+            self.show_message("neither gh nor npx available on PATH".into());
+            return;
+        }
         let targets = self.operation_targets();
         if targets.is_empty() {
-            return Ok(());
+            return;
         }
-        let names: Vec<String> = targets
+        self.update_suggested = suggested_update_backend_for(&targets);
+        self.update_jobs = targets
             .iter()
-            .filter(|s| s.source_url.is_some())
-            .map(|s| s.name.clone())
+            .map(|s| UpdateJob {
+                name: s.name.clone(),
+                scope: s.scope,
+                dirs: prefer_update_dirs(s),
+            })
             .collect();
-        let skipped = targets.len() - names.len();
-        if names.is_empty() {
-            self.show_message("no gh provenance; cannot update".into());
-            return Ok(());
+
+        // If only one backend is installed, skip the picker.
+        match (self.gh_available, self.npx_available) {
+            (true, false) => self.queue_update(AddBackend::GhSkill),
+            (false, true) => self.queue_update(AddBackend::NpxSkills),
+            _ => self.mode = Mode::UpdateBackend,
         }
-        let label = if names.len() == 1 {
-            format!("Updating '{}' …", names[0])
+    }
+
+    fn handle_update_backend_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.update_jobs.clear();
+                self.update_suggested = None;
+                self.mode = Mode::List;
+                self.status = "update cancelled".into();
+            }
+            KeyCode::Char('1') | KeyCode::Char('g') => {
+                if self.gh_available {
+                    self.queue_update(AddBackend::GhSkill);
+                } else {
+                    self.status = "gh not available".into();
+                }
+            }
+            KeyCode::Char('2') | KeyCode::Char('n') => {
+                if self.npx_available {
+                    self.queue_update(AddBackend::NpxSkills);
+                } else {
+                    self.status = "npx not available".into();
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(backend) = self.update_suggested {
+                    let ok = match backend {
+                        AddBackend::GhSkill => self.gh_available,
+                        AddBackend::NpxSkills => self.npx_available,
+                    };
+                    if ok {
+                        self.queue_update(backend);
+                    } else {
+                        self.status = format!("{} not available", backend.as_str());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn queue_update(&mut self, backend: AddBackend) {
+        let jobs = std::mem::take(&mut self.update_jobs);
+        self.update_suggested = None;
+        if jobs.is_empty() {
+            self.mode = Mode::List;
+            return;
+        }
+        let label = if jobs.len() == 1 {
+            format!("Updating '{}' via {} …", jobs[0].name, backend.as_str())
         } else {
-            format!("Updating {} skills …", names.len())
+            format!("Updating {} skills via {} …", jobs.len(), backend.as_str())
         };
         self.set_busy(label);
-        if skipped > 0 {
-            self.status = format!("{} (skipping {skipped} without provenance)", self.status);
-        }
-        self.pending_action = Some(PendingAction::Update(names));
-        Ok(())
+        self.pending_action = Some(PendingAction::Update { backend, jobs });
     }
 
     pub fn show_message(&mut self, msg: String) {
-        self.message = msg;
+        self.message = crate::adapters::command::strip_ansi(&msg);
         self.mode = Mode::Message;
     }
 }
