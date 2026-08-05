@@ -11,6 +11,8 @@
 
 See which skills are installed, where they apply, and whether they are used — then add, delete, or update them from the same screen.
 
+![skls TUI](docs/images/skls.png)
+
 ## Features
 
 - **Inventory**: 27 agent hosts (Cursor loads `~/.agents/skills` too). Filter by project / user scope and agent; multi-select for bulk actions
@@ -61,18 +63,6 @@ skls --dump-json                     # print inventory as JSON (no TUI)
 On startup the skill list appears first, then activation is sampled. With defaults, the list usually shows within about 1–2 seconds.
 
 ## Screen
-
-```
-┌ skls  scope:all  agents:all  sort:delete_score  window:30d  sample:≤80sess/256KiB ─┐
-│ 170 skills | gh:ok npx:ok | activations ready | sampled (-N older) | /path/to/project   │
-├──────────────────────────────────┬──────────────────────────────────────────────────────┤
-│ NAME              SCOPE RATE SCORE│ detail                                              │
-│ [ ] brand          user  0.0%  85 │ brand                                               │
-│ [x] find-skills    user  1.2%  30 │ source: npx / gh …                                  │
-│ ...                               │ hits / rate / delete_score / paths …                │
-└──────────────────────────────────┴──────────────────────────────────────────────────────┘
-│ j/k  Space/* /x select  d/u on selection  / f s a r R ? q                               │
-```
 
 List on the left, detail on the right. `[ ]` / `[x]` mark multi-select. Default sort is `delete_score` (higher = stronger delete candidate).
 

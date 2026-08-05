@@ -6,8 +6,12 @@ use crate::ops::AddBackend;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, HighlightSpacing, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
+
+/// Highlight symbol for skill / search lists. ASCII so display width is stable
+/// across fonts (▶ is Ambiguous-width and often shifts columns in screenshots).
+const LIST_HIGHLIGHT: &str = "> ";
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let chunks = Layout::default()
@@ -104,29 +108,18 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
         .map(|&skill_i| {
             let s = &app.skills[skill_i];
             let mark = if app.is_checked(s) { "[x]" } else { "[ ]" };
-            let rate = s
-                .stats
-                .activation_rate
-                .map(|r| format!("{:>5.1}%", r * 100.0))
-                .unwrap_or_else(|| "  n/a".into());
-            let line = format!(
-                "{mark} {:<20} {:7} {rate} {:>5.0}",
-                truncate(&s.name, 20),
+            let line = format_skill_list_row(
+                mark,
+                &s.name,
                 s.scope.as_str(),
-                s.stats.delete_score
+                s.stats.activation_rate,
+                s.stats.delete_score,
             );
             ListItem::new(Line::from(line))
         })
         .collect();
 
-    let list_title = if app.checked_count() > 0 {
-        format!(
-            " NAME                 SCOPE   RATE  SCORE  ({} selected) ",
-            app.checked_count()
-        )
-    } else {
-        " NAME                 SCOPE   RATE  SCORE ".into()
-    };
+    let list_title = skill_list_title(app.checked_count());
     let list = List::new(items)
         .block(Block::default().borders(Borders::ALL).title(list_title))
         .highlight_style(
@@ -135,7 +128,8 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
                 .bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         )
-        .highlight_symbol("▶ ");
+        .highlight_symbol(LIST_HIGHLIGHT)
+        .highlight_spacing(HighlightSpacing::Always);
     frame.render_stateful_widget(list, panes[0], &mut app.list_state);
 
     let detail = match app.selected_skill() {
@@ -528,7 +522,8 @@ fn draw_add_results_modal(frame: &mut Frame, app: &mut App) {
                 .fg(Color::Black)
                 .add_modifier(Modifier::BOLD),
         )
-        .highlight_symbol("▶ ");
+        .highlight_symbol(LIST_HIGHLIGHT)
+        .highlight_spacing(HighlightSpacing::Always);
     frame.render_stateful_widget(list, chunks[1], &mut app.add_list_state);
 
     let footer = Paragraph::new("Keys  j/k=move  Enter=next with this skill  Esc=back  q=cancel")
@@ -805,5 +800,90 @@ fn truncate(s: &str, max: usize) -> String {
         let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
         out.push('…');
         out
+    }
+}
+
+/// Format one skill inventory row. Columns: mark(3) name(20) scope(7) rate(6) score(5).
+fn format_skill_list_row(
+    mark: &str,
+    name: &str,
+    scope: &str,
+    activation_rate: Option<f64>,
+    delete_score: f64,
+) -> String {
+    let rate = format_rate_column(activation_rate);
+    format!(
+        "{mark} {:<20} {:7} {rate} {:>5.0}",
+        truncate(name, 20),
+        scope,
+        delete_score
+    )
+}
+
+fn format_rate_column(activation_rate: Option<f64>) -> String {
+    activation_rate
+        .map(|r| format!("{:>5.1}%", r * 100.0))
+        .unwrap_or_else(|| format!("{:>6}", "n/a"))
+}
+
+/// Block title aligned with [`format_skill_list_row`] under [`LIST_HIGHLIGHT`] spacing.
+fn skill_list_title(checked_count: usize) -> String {
+    // Leading cells match LIST_HIGHLIGHT width so headers sit over row text
+    // (HighlightSpacing::Always reserves that gutter for every row).
+    let highlight_pad = " ".repeat(LIST_HIGHLIGHT.chars().count());
+    let cols = format!(
+        "{highlight_pad}{:<3} {:<20} {:7} {:>6} {:>5}",
+        "", "NAME", "SCOPE", "RATE", "SCORE"
+    );
+    if checked_count > 0 {
+        format!("{cols}  ({checked_count} selected) ")
+    } else {
+        format!("{cols} ")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skill_list_headers_align_with_row_columns() {
+        let highlight_pad = " ".repeat(LIST_HIGHLIGHT.chars().count());
+        let row = format!(
+            "{highlight_pad}{}",
+            format_skill_list_row("[ ]", "agent-reach", "user", Some(0.0), 85.0)
+        );
+        // Same skeleton as the title, with data values in each column.
+        let expected_header = format!(
+            "{highlight_pad}{:<3} {:<20} {:7} {:>6} {:>5} ",
+            "", "NAME", "SCOPE", "RATE", "SCORE"
+        );
+        assert_eq!(skill_list_title(0), expected_header);
+
+        // Column starts: name / scope / rate / score (byte offsets; ASCII-only labels).
+        let name_at = highlight_pad.len() + 4; // "[ ] "
+        assert_eq!(&row[name_at..name_at + 11], "agent-reach");
+        assert_eq!(&expected_header[name_at..name_at + 4], "NAME");
+
+        let scope_at = name_at + 20 + 1;
+        assert_eq!(&row[scope_at..scope_at + 4], "user");
+        assert_eq!(&expected_header[scope_at..scope_at + 5], "SCOPE");
+
+        let rate_at = scope_at + 7 + 1;
+        assert_eq!(&row[rate_at..rate_at + 6], "  0.0%");
+        assert_eq!(&expected_header[rate_at..rate_at + 6], "  RATE");
+
+        let score_at = rate_at + 6 + 1;
+        assert_eq!(&row[score_at..score_at + 5], "   85");
+        assert_eq!(&expected_header[score_at..score_at + 5], "SCORE");
+    }
+
+    #[test]
+    fn skill_list_rate_column_is_fixed_width() {
+        assert_eq!(format_rate_column(Some(0.012)).len(), 6);
+        assert_eq!(format_rate_column(None).len(), 6);
+        let with_rate = format_skill_list_row("[ ]", "a", "user", Some(0.012), 10.0);
+        let without = format_skill_list_row("[ ]", "a", "user", None, 10.0);
+        assert_eq!(with_rate.len(), without.len());
     }
 }

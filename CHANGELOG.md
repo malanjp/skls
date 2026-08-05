@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-05
+
+### Fixed
+
+- Skill list column headers (`NAME` / `SCOPE` / `RATE` / `SCORE`) align with row values (checkbox + selection gutter)
+
+### Changed
+
+- README includes a sample TUI screenshot (`docs/images/skls.png`)
+
 ## [0.3.1] - 2026-08-04
 
 ### Added
@@ -67,7 +77,8 @@ Initial release of **skls** (*skills list*).
 - Log matching is heuristic, not a precise skill-execution count
 - Listing and metrics work without `gh` / `npx`; only CLI-dependent actions are disabled
 
-[Unreleased]: https://github.com/malanjp/skls/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/malanjp/skls/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/malanjp/skls/releases/tag/v0.3.2
 [0.3.1]: https://github.com/malanjp/skls/releases/tag/v0.3.1
 [0.3.0]: https://github.com/malanjp/skls/releases/tag/v0.3.0
 [0.2.0]: https://github.com/malanjp/skls/releases/tag/v0.2.0

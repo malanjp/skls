@@ -11,6 +11,8 @@
 
 どのスキルが入っているか、どこに効いているか、使われているかを一覧で把握し、追加・削除・更新まで同じ画面で行う。
 
+![skls TUI](docs/images/skls.png)
+
 ## できること
 
 - **一覧**: 27 エージェントホスト（Cursor が読む `~/.agents/skills` も含む）。project / user とエージェントでフィルタ、複数選択で一括操作
@@ -61,18 +63,6 @@ skls --dump-json                     # TUI なしでインベントリを JSON �
 起動時はスキル一覧を先に出し、その後に発動率をサンプリング解析する。既定上限なら通常 1〜2 秒程度で一覧まで到達する。
 
 ## 画面
-
-```
-┌ skls  scope:all  agents:all  sort:delete_score  window:30d  sample:≤80sess/256KiB ─┐
-│ 170 skills | gh:ok npx:ok | activations ready | sampled (-N older) | /path/to/project   │
-├──────────────────────────────────┬──────────────────────────────────────────────────────┤
-│ NAME              SCOPE RATE SCORE│ detail                                              │
-│ [ ] brand          user  0.0%  85 │ brand                                               │
-│ [x] find-skills    user  1.2%  30 │ source: npx / gh …                                  │
-│ ...                               │ hits / rate / delete_score / paths …                │
-└──────────────────────────────────┴──────────────────────────────────────────────────────┘
-│ j/k  Space/* /x select  d/u on selection  / f s a r R ? q                               │
-```
 
 左が一覧、右が詳細。行頭の `[ ]` / `[x]` は複数選択。デフォルトソートは `delete_score`（高いほど削除候補）。
 
