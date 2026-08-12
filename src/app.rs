@@ -6,7 +6,7 @@ use crate::analytics::{
     AnalyzeLimits, LogPaths, analyze_logs_with_limits, apply_scores, apply_stats,
 };
 use crate::inventory::{InventoryOptions, build_inventory};
-use crate::model::{Agent, Scope, SkillFilters, SkillKey, SkillRecord, SortKey};
+use crate::model::{Agent, InstallSource, Scope, SkillFilters, SkillKey, SkillRecord, SortKey};
 use crate::ops::{
     AddBackend, DeletePlan, UpdateJob, plan_delete, prefer_update_dirs,
     suggested_update_backend_for,
@@ -407,6 +407,12 @@ impl App {
                     .partial_cmp(&sa.stats.delete_score)
                     .unwrap_or(std::cmp::Ordering::Equal),
                 SortKey::LastHit => sb.stats.last_hit_at.cmp(&sa.stats.last_hit_at),
+                SortKey::Author => {
+                    Self::opt_cmp(&sa.author, &sb.author).then_with(|| sa.name.cmp(&sb.name))
+                }
+                SortKey::Source => Self::source_rank(sa.source)
+                    .cmp(&Self::source_rank(sb.source))
+                    .then_with(|| sa.name.cmp(&sb.name)),
             }
         });
 
@@ -415,6 +421,26 @@ impl App {
             self.selected = self.filtered_indices.len().saturating_sub(1);
         }
         self.sync_list_state();
+    }
+
+    /// author sort keeps `None` (unknown) at the end.
+    fn opt_cmp(a: &Option<String>, b: &Option<String>) -> std::cmp::Ordering {
+        match (a, b) {
+            (Some(x), Some(y)) => x.cmp(y),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+    }
+
+    /// source sort order: managed installs first (gh → npx → plugin → manual).
+    fn source_rank(s: InstallSource) -> u8 {
+        match s {
+            InstallSource::Gh => 0,
+            InstallSource::Npx => 1,
+            InstallSource::Plugin => 2,
+            InstallSource::Manual => 3,
+        }
     }
 
     pub fn sync_list_state(&mut self) {
@@ -1131,6 +1157,7 @@ mod tests {
                 install_kind: InstallKind::Copy,
                 source: InstallSource::Manual,
                 source_url: None,
+                author: None,
                 version: None,
                 pinned: false,
                 stats: SkillStats {
@@ -1151,6 +1178,7 @@ mod tests {
                 install_kind: InstallKind::Symlink,
                 source: InstallSource::Gh,
                 source_url: Some("https://x".into()),
+                author: None,
                 version: Some("v1".into()),
                 pinned: false,
                 stats: SkillStats {
@@ -1181,6 +1209,50 @@ mod tests {
         app.sort_key = SortKey::Score;
         app.recompute_view();
         assert_eq!(app.selected_skill().unwrap().name, "alpha");
+    }
+
+    #[test]
+    fn sort_by_author_orders_unknown_last() {
+        let mut app = sample_app();
+        app.skills[0].author = None;
+        app.skills[1].author = Some("abc".into());
+        app.sort_key = SortKey::Author;
+        app.recompute_view();
+        let names: Vec<&str> = app
+            .filtered_indices
+            .iter()
+            .map(|&i| app.skills[i].name.as_str())
+            .collect();
+        assert_eq!(names, vec!["beta", "alpha"]);
+    }
+
+    #[test]
+    fn sort_by_source_ranks_managed_first() {
+        let mut app = sample_app();
+        app.skills[0].source = InstallSource::Npx;
+        app.skills[1].source = InstallSource::Manual;
+        app.sort_key = SortKey::Source;
+        app.recompute_view();
+        let names: Vec<&str> = app
+            .filtered_indices
+            .iter()
+            .map(|&i| app.skills[i].name.as_str())
+            .collect();
+        assert_eq!(names, vec!["alpha", "beta"]);
+    }
+
+    #[test]
+    fn sort_cycle_covers_all_keys() {
+        let mut key = SortKey::Name;
+        let mut seen = vec![key];
+        for _ in 0..SortKey::Source as usize {
+            key = key.next();
+            seen.push(key);
+        }
+        assert_eq!(seen.len(), 6);
+        assert!(seen.contains(&SortKey::Author));
+        assert!(seen.contains(&SortKey::Source));
+        assert_eq!(SortKey::Source.next(), SortKey::Name);
     }
 
     #[test]

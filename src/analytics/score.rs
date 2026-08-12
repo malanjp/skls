@@ -90,6 +90,7 @@ mod tests {
             install_kind: InstallKind::Copy,
             source: InstallSource::Manual,
             source_url: None,
+            author: None,
             version: None,
             pinned: false,
             stats: SkillStats {

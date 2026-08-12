@@ -284,6 +284,9 @@ pub enum InstallSource {
     Gh,
     Npx,
     Manual,
+    /// Bundled inside an agent plugin (Claude Code / Cursor / Codex /
+    /// `~/.agents/plugins`). Not managed by gh / npx.
+    Plugin,
 }
 
 impl InstallSource {
@@ -292,6 +295,7 @@ impl InstallSource {
             InstallSource::Gh => "gh",
             InstallSource::Npx => "npx",
             InstallSource::Manual => "manual",
+            InstallSource::Plugin => "plugin",
         }
     }
 }
@@ -332,6 +336,7 @@ pub struct SkillRecord {
     pub install_kind: InstallKind,
     pub source: InstallSource,
     pub source_url: Option<String>,
+    pub author: Option<String>,
     pub version: Option<String>,
     pub pinned: bool,
     pub stats: SkillStats,
@@ -377,12 +382,27 @@ pub fn agents_label(agents: &[Agent]) -> String {
     }
 }
 
+/// GitHub owner parsed from a repo URL (used for author attribution).
+pub fn github_owner(url: &str) -> Option<String> {
+    let url = url.trim_end_matches('/');
+    let rest = url
+        .strip_prefix("https://github.com/")
+        .or_else(|| url.strip_prefix("http://github.com/"))?;
+    let rest = rest.strip_suffix(".git").unwrap_or(rest);
+    rest.split('/')
+        .next()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortKey {
     Name,
     Rate,
     Score,
     LastHit,
+    Author,
+    Source,
 }
 
 impl SortKey {
@@ -391,7 +411,9 @@ impl SortKey {
             SortKey::Name => SortKey::Rate,
             SortKey::Rate => SortKey::Score,
             SortKey::Score => SortKey::LastHit,
-            SortKey::LastHit => SortKey::Name,
+            SortKey::LastHit => SortKey::Author,
+            SortKey::Author => SortKey::Source,
+            SortKey::Source => SortKey::Name,
         }
     }
 
@@ -401,6 +423,8 @@ impl SortKey {
             SortKey::Rate => "rate",
             SortKey::Score => "delete_score",
             SortKey::LastHit => "last_hit",
+            SortKey::Author => "author",
+            SortKey::Source => "source",
         }
     }
 }
@@ -502,11 +526,26 @@ mod tests {
             install_kind: InstallKind::Copy,
             source: InstallSource::Manual,
             source_url: None,
+            author: None,
             version: None,
             pinned: false,
             stats: SkillStats::default(),
         };
         assert_eq!(rec.key(), (String::from("tdd"), Scope::Project));
+    }
+
+    #[test]
+    fn github_owner_parses_repo_urls() {
+        assert_eq!(
+            github_owner("https://github.com/mattpocock/skills"),
+            Some("mattpocock".into())
+        );
+        assert_eq!(
+            github_owner("https://github.com/vercel-labs/agent-browser.git"),
+            Some("vercel-labs".into())
+        );
+        assert_eq!(github_owner("https://example.com/x"), None);
+        assert_eq!(github_owner(""), None);
     }
 
     #[test]
@@ -521,6 +560,7 @@ mod tests {
             install_kind: InstallKind::Copy,
             source: InstallSource::Npx,
             source_url: None,
+            author: None,
             version: None,
             pinned: false,
             stats: SkillStats::default(),

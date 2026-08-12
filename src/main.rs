@@ -136,6 +136,7 @@ fn dump_records(app: &App) -> Vec<serde_json::Value> {
                 "scope": s.scope.as_str(),
                 "agents": s.agents.iter().map(|a| a.as_str()).collect::<Vec<_>>(),
                 "source": s.source.as_str(),
+                "author": s.author,
                 "activation_rate": s.stats.activation_rate,
                 "delete_score": s.stats.delete_score,
                 "hits": s.stats.hits,

@@ -31,6 +31,13 @@ pub struct DeletePlan {
     pub paths: Vec<std::path::PathBuf>,
     pub source: InstallSource,
     pub shared_warning: Option<String>,
+    pub plugin_warning: Option<String>,
+}
+
+/// Whether a path lives inside an agent plugin cache / store.
+pub(crate) fn is_plugin_path(path: &Path) -> bool {
+    let s = path.to_string_lossy();
+    s.contains("/plugins/")
 }
 
 pub fn plan_delete(skill: &SkillRecord, agents: &[Agent]) -> DeletePlan {
@@ -44,6 +51,7 @@ pub fn plan_delete(skill: &SkillRecord, agents: &[Agent]) -> DeletePlan {
     paths.sort();
     paths.dedup();
     let mut shared_warning = None;
+    let mut plugin_warning = None;
     for loc in &selected {
         let candidates = [Some(loc.path.as_path()), loc.resolved.as_deref()];
         for path in candidates.into_iter().flatten() {
@@ -51,6 +59,12 @@ pub fn plan_delete(skill: &SkillRecord, agents: &[Agent]) -> DeletePlan {
             if s.contains("/.agents/skills/") {
                 shared_warning = Some(format!(
                     "Removing shared store path may affect other agents: {s}"
+                ));
+                break;
+            }
+            if is_plugin_path(path) {
+                plugin_warning = Some(format!(
+                    "This path is inside an agent plugin; removing it may break the plugin install: {s}"
                 ));
                 break;
             }
@@ -66,6 +80,7 @@ pub fn plan_delete(skill: &SkillRecord, agents: &[Agent]) -> DeletePlan {
         paths,
         source: skill.source,
         shared_warning,
+        plugin_warning,
     }
 }
 
@@ -271,6 +286,9 @@ fn execute_update_gh(runner: &impl CommandRunner, jobs: &[UpdateJob]) -> Result<
 
 /// Best-effort backend guess for the update picker.
 pub fn suggested_update_backend(skill: &SkillRecord) -> Option<AddBackend> {
+    if skill.source == InstallSource::Plugin {
+        return None;
+    }
     if skill.source == InstallSource::Gh || skill_has_gh_metadata(skill) {
         return Some(AddBackend::GhSkill);
     }
@@ -333,6 +351,7 @@ pub fn prefer_update_dirs(skill: &SkillRecord, agents: &[Agent]) -> Vec<PathBuf>
         .locations
         .iter()
         .filter(|l| agents.contains(&l.agent))
+        .filter(|l| !is_plugin_path(&l.path))
         .filter_map(|l| {
             let parent = l.path.parent()?.to_path_buf();
             Some((score(&l.path), parent))
@@ -372,6 +391,7 @@ mod tests {
             install_kind: InstallKind::Symlink,
             source: InstallSource::Manual,
             source_url: None,
+            author: None,
             version: None,
             pinned: false,
             stats: SkillStats::default(),
@@ -397,6 +417,7 @@ mod tests {
             paths: vec![skill_dir.clone()],
             source: InstallSource::Npx,
             shared_warning: None,
+            plugin_warning: None,
         };
         let runner = FakeCommandRunner::with_responses(vec![
             CommandOutput {
@@ -441,6 +462,7 @@ mod tests {
             paths: vec![skill_dir],
             source: InstallSource::Manual,
             shared_warning: None,
+            plugin_warning: None,
         };
         let runner = FakeCommandRunner::with_responses(vec![CommandOutput {
             status: 0,
@@ -491,6 +513,7 @@ mod tests {
             install_kind: InstallKind::Copy,
             source: InstallSource::Npx,
             source_url: Some("https://github.com/mattpocock/skills.git".into()),
+            author: None,
             version: None,
             pinned: false,
             stats: SkillStats::default(),
@@ -536,6 +559,7 @@ mod tests {
             install_kind: InstallKind::Copy,
             source: InstallSource::Gh,
             source_url: Some("https://github.com/ex/skills".into()),
+            author: None,
             version: None,
             pinned: false,
             stats: SkillStats::default(),
@@ -578,10 +602,79 @@ mod tests {
             install_kind: InstallKind::Copy,
             source: InstallSource::Gh,
             source_url: None,
+            author: None,
             version: None,
             pinned: false,
             stats: SkillStats::default(),
         };
+        let dirs = prefer_update_dirs(&skill, &[Agent::ClaudeCode]);
+        assert_eq!(dirs, vec![claude.parent().unwrap().to_path_buf()]);
+    }
+
+    fn plugin_skill(source: InstallSource) -> SkillRecord {
+        SkillRecord {
+            id: "x".into(),
+            name: "x".into(),
+            description: String::new(),
+            scope: Scope::User,
+            agents: vec![Agent::ClaudeCode],
+            locations: vec![SkillLocation {
+                agent: Agent::ClaudeCode,
+                scope: Scope::User,
+                path: PathBuf::from(
+                    "/home/.claude/plugins/cache/claude-plugins-official/sp/1.0.0/skills/x",
+                ),
+                kind: InstallKind::Copy,
+                resolved: None,
+            }],
+            install_kind: InstallKind::Copy,
+            source,
+            source_url: None,
+            author: None,
+            version: None,
+            pinned: false,
+            stats: SkillStats::default(),
+        }
+    }
+
+    #[test]
+    fn plan_delete_warns_on_plugin_paths() {
+        let plan = plan_delete(&plugin_skill(InstallSource::Plugin), &[Agent::ClaudeCode]);
+        assert!(plan.plugin_warning.is_some());
+        assert!(plan.plugin_warning.as_deref().unwrap().contains("plugin"));
+    }
+
+    #[test]
+    fn plan_delete_does_not_warn_on_plugin_for_manual_path() {
+        let plan = plan_delete(&plugin_skill(InstallSource::Manual), &[Agent::ClaudeCode]);
+        assert!(
+            plan.plugin_warning.is_some(),
+            "detects by path regardless of source"
+        );
+    }
+
+    #[test]
+    fn suggested_backend_none_for_plugin_source() {
+        assert_eq!(
+            suggested_update_backend(&plugin_skill(InstallSource::Plugin)),
+            None
+        );
+    }
+
+    #[test]
+    fn prefer_update_dirs_excludes_plugin_cache_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let claude = tmp.path().join(".claude/skills/x");
+        fs::create_dir_all(&claude).unwrap();
+        fs::write(claude.join("SKILL.md"), "---\nname: x\n---\n").unwrap();
+        let mut skill = plugin_skill(InstallSource::Plugin);
+        skill.locations.push(SkillLocation {
+            agent: Agent::ClaudeCode,
+            scope: Scope::User,
+            path: claude.clone(),
+            kind: InstallKind::Copy,
+            resolved: None,
+        });
         let dirs = prefer_update_dirs(&skill, &[Agent::ClaudeCode]);
         assert_eq!(dirs, vec![claude.parent().unwrap().to_path_buf()]);
     }

@@ -15,10 +15,10 @@ See which skills are installed, where they apply, and whether they are used — 
 
 ## Features
 
-- **Inventory**: 27 agent hosts (Cursor loads `~/.agents/skills` too). Filter by project / user scope and agent; multi-select for bulk actions
+- **Inventory**: 27 agent hosts (Cursor loads `~/.agents/skills` too). Scans skills bundled in Claude Code / Cursor / Codex / agents plugins. Filter by project / user scope and agent; multi-select for bulk actions
 - **Metrics**: Compute activation rate from conversation logs and show a delete-recommendation score (`delete_score`)
 - **Add**: Install with `gh skill` or `npx skills` (chosen each time). Defaults to cursor / claude-code / codex; `*` selects every host
-- **Delete**: Remove inventory paths (confirmation required). npx-sourced skills also run `npx skills remove`. Warns on shared-store paths
+- **Delete**: Remove inventory paths (confirmation required). npx-sourced skills also run `npx skills remove`. Warns on shared-store and plugin paths
 - **Update**: Choose `gh skill` / `npx skills`. If provenance can be inferred, Enter accepts the suggestion
 
 ## Dependencies
@@ -66,6 +66,8 @@ On startup the skill list appears first, then activation is sampled. With defaul
 
 List on the left, detail on the right. `[ ]` / `[x]` mark multi-select. Default sort is `delete_score` (higher = stronger delete candidate).
 
+List columns: `NAME` · `SCOPE` · `SRC` (source: `gh` / `npx` / `plugin` / `manual`) · `AUTHOR` · `RATE` · `SCORE`. Author comes from the SKILL.md frontmatter, the plugin manifest, or the GitHub owner of the source repo.
+
 `sample:` in the title is the activation analysis cap; `sampled (-N older)` in the status is how many older sessions were skipped.
 
 ## Keybindings
@@ -78,7 +80,7 @@ List on the left, detail on the right. `[ ]` / `[x]` mark multi-select. Default 
 | `x` | Clear selection |
 | `/` | Search name / description |
 | `f` | Filter panel |
-| `s` | Cycle sort (`name` → `rate` → `delete_score` → `last_hit`) |
+| `s` | Cycle sort (`name` → `rate` → `delete_score` → `last_hit` → `author` → `source`) |
 | `a` | Add flow |
 | `d` | Delete confirm (selection if any, else current row) |
 | `u` | Update (pick backend; Enter uses suggestion when available) |
@@ -112,7 +114,7 @@ Step through dialogs. `Esc` goes back one step; `q` cancels.
 - `j`/`k` move, `Space` toggle, `*` select all, `x` clear all
 - `y` / `Enter` confirm; `n` / `q` / `Esc` cancel
 - Removes inventory paths first; for `source: npx`, also runs `npx skills remove` per selected agent
-- Paths under a shared store (e.g. `~/.agents/skills`) produce a warning; duplicate paths are deduped
+- Paths under a shared store (e.g. `~/.agents/skills`) or inside a plugin install produce a warning; duplicate paths are deduped
 - After delete, only the list is rescanned. Press `R` to recompute activation
 
 ### Update (`u`)
@@ -159,6 +161,19 @@ Extra metadata:
 - If `~/.agents/.skill-lock.json` exists, set `source: npx` (startup does **not** call `npx skills list`)
 
 Scope vocabulary follows `gh skill` (`project` / `user`). `npx skills -g` is treated as user.
+
+### Plugins
+
+Skills bundled inside agent plugins are attributed to the host that owns the files:
+
+| Store | Path | Attributed to |
+|-------|------|---------------|
+| Claude Code | `~/.claude/plugins/` (via `installed_plugins.json`, scope from the manifest) | claude-code |
+| Cursor | `~/.cursor/plugins/cache/*/*/*/skills/` | cursor |
+| Codex | `~/.codex/plugins/cache/*/*/*/skills/` | codex |
+| agents | `~/.agents/plugins/` (lenient walk for `skills/` dirs) | the shared-store hosts (cursor / cline / warp / universal) |
+
+Plugin skills are marked `source: plugin`. They are not updated via `gh` / `npx`, and deleting them warns that the path lives inside a plugin install.
 
 ## Activation rate and delete score
 

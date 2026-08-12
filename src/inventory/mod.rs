@@ -3,10 +3,11 @@
 use crate::adapters::CommandRunner;
 use crate::adapters::fs::{DiscoveredSkill, scan_skills};
 use crate::adapters::gh_skill::{GhSkillCli, GhSkillListItem};
+use crate::adapters::plugin::scan_plugin_skills;
 use crate::adapters::skill_lock::{SkillLock, load_locks};
 use crate::model::{
     Agent, InstallKind, InstallSource, Scope, SkillKey, SkillLocation, SkillRecord, SkillStats,
-    normalize_skill_id,
+    github_owner, normalize_skill_id,
 };
 use anyhow::Result;
 use std::collections::HashMap;
@@ -26,7 +27,9 @@ pub fn build_inventory(
     let mut warnings = Vec::new();
     let (discovered, scan_warnings) = scan_skills(project_root, home)?;
     warnings.extend(scan_warnings);
-    let mut records = merge_discovered(discovered);
+    let (plugin_skills, plugin_warnings) = scan_plugin_skills(project_root, home)?;
+    warnings.extend(plugin_warnings);
+    let mut records = merge_discovered(discovered.into_iter().chain(plugin_skills).collect());
 
     // Fast path: npx skills lockfile (no process spawn).
     for (scope, lock) in load_locks(project_root, home) {
@@ -59,6 +62,7 @@ pub fn merge_discovered(discovered: Vec<DiscoveredSkill>) -> Vec<SkillRecord> {
             install_kind: d.location.kind,
             source: infer_source(&d),
             source_url: d.source_url.clone(),
+            author: d.author.clone(),
             version: d.version.clone(),
             pinned: d.pinned,
             stats: SkillStats::default(),
@@ -71,6 +75,12 @@ pub fn merge_discovered(discovered: Vec<DiscoveredSkill>) -> Vec<SkillRecord> {
         entry.install_kind = prefer_kind(entry.install_kind, d.location.kind);
         if entry.source_url.is_none() {
             entry.source_url = d.source_url.clone();
+        }
+        if entry.author.is_none() {
+            entry.author = d
+                .author
+                .clone()
+                .or_else(|| d.source_url.as_deref().and_then(github_owner));
         }
         if entry.version.is_none() {
             entry.version = d.version.clone();
@@ -156,6 +166,15 @@ pub fn enrich_with_skill_lock(records: &mut [SkillRecord], lock: &SkillLock, sco
         if rec.source_url.is_none() && !entry.source_url.is_empty() {
             rec.source_url = Some(entry.source_url.clone());
         }
+        if rec.author.is_none() {
+            // Lock `source` is `owner/repo`.
+            let owner_from_source = entry
+                .source
+                .split_once('/')
+                .map(|(owner, _)| owner.trim().to_string())
+                .filter(|owner| !owner.is_empty());
+            rec.author = owner_from_source.or_else(|| github_owner(&entry.source_url));
+        }
     }
 }
 
@@ -164,6 +183,9 @@ fn apply_gh_item(rec: &mut SkillRecord, item: &GhSkillListItem, scope: Scope) {
     if !item.source_url.is_empty() {
         rec.source_url = Some(item.source_url.clone());
         rec.source = InstallSource::Gh;
+        if rec.author.is_none() {
+            rec.author = github_owner(&item.source_url);
+        }
     }
     if !item.version.is_empty() {
         rec.version = Some(item.version.clone());
@@ -189,6 +211,9 @@ fn apply_gh_item(rec: &mut SkillRecord, item: &GhSkillListItem, scope: Scope) {
 }
 
 fn infer_source(d: &DiscoveredSkill) -> InstallSource {
+    if let Some(source) = d.source {
+        return source;
+    }
     if d.source_url.as_deref().is_some_and(|u| !u.is_empty()) {
         // github-repo / sourceURL in SKILL.md is the gh-skill metadata shape.
         InstallSource::Gh
@@ -206,11 +231,14 @@ fn prefer_kind(a: InstallKind, b: InstallKind) -> InstallKind {
 }
 
 fn prefer_source(a: InstallSource, b: InstallSource) -> InstallSource {
-    match (a, b) {
-        (InstallSource::Gh, _) | (_, InstallSource::Gh) => InstallSource::Gh,
-        (InstallSource::Npx, _) | (_, InstallSource::Npx) => InstallSource::Npx,
-        _ => InstallSource::Manual,
-    }
+    // Gh > Npx > Plugin > Manual.
+    let rank = |s: InstallSource| match s {
+        InstallSource::Gh => 3,
+        InstallSource::Npx => 2,
+        InstallSource::Plugin => 1,
+        InstallSource::Manual => 0,
+    };
+    if rank(b) > rank(a) { b } else { a }
 }
 
 #[cfg(test)]
@@ -233,8 +261,10 @@ mod tests {
                 resolved: None,
             },
             source_url: None,
+            author: None,
             version: None,
             pinned: false,
+            source: None,
         }
     }
 
@@ -246,6 +276,30 @@ mod tests {
         ]);
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].agents.len(), 2);
+    }
+
+    #[test]
+    fn merge_derives_author_from_github_url() {
+        let mut d = disc("tdd", Agent::Cursor, Scope::User);
+        d.source_url = Some("https://github.com/mattpocock/skills".into());
+        let records = merge_discovered(vec![d]);
+        assert_eq!(records[0].author.as_deref(), Some("mattpocock"));
+    }
+
+    #[test]
+    fn enrich_skill_lock_sets_author_from_source() {
+        let mut records = merge_discovered(vec![disc("find-skills", Agent::Cursor, Scope::User)]);
+        let mut lock = SkillLock::default();
+        lock.skills.insert(
+            "find-skills".into(),
+            crate::adapters::skill_lock::SkillLockEntry {
+                source: "vercel-labs/skills".into(),
+                source_url: "https://github.com/vercel-labs/skills.git".into(),
+                source_type: "github".into(),
+            },
+        );
+        enrich_with_skill_lock(&mut records, &lock, Scope::User);
+        assert_eq!(records[0].author.as_deref(), Some("vercel-labs"));
     }
 
     #[test]
@@ -301,6 +355,57 @@ mod tests {
     }
 
     #[test]
+    fn build_inventory_merges_plugin_skills_with_regular_roots() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("proj");
+        let home = tmp.path().join("home");
+
+        // Regular install for claude-code.
+        std::fs::create_dir_all(home.join(".claude/skills/tdd")).unwrap();
+        std::fs::write(
+            home.join(".claude/skills/tdd/SKILL.md"),
+            "---\nname: tdd\ndescription: TDD\n---\n",
+        )
+        .unwrap();
+
+        // Same skill bundled inside a claude plugin.
+        let plugin = home.join(".claude/plugins/cache/claude-plugins-official/superpowers/6.2.0");
+        std::fs::create_dir_all(plugin.join("skills/tdd")).unwrap();
+        std::fs::write(
+            plugin.join("skills/tdd/SKILL.md"),
+            "---\nname: tdd\ndescription: TDD via plugin\n---\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(home.join(".claude/plugins")).unwrap();
+        std::fs::write(
+            home.join(".claude/plugins/installed_plugins.json"),
+            format!(
+                r#"{{"version":2,"plugins":{{"superpowers@m":[
+                  {{"scope":"user","installPath":"{}","version":"6.2.0"}}
+                ]}}}}"#,
+                plugin.display()
+            ),
+        )
+        .unwrap();
+
+        let runner = crate::adapters::command::FakeCommandRunner::default();
+        let (records, _warnings) =
+            build_inventory(&project, &home, &runner, &InventoryOptions::default()).unwrap();
+
+        let tdd = records.iter().find(|r| r.name == "tdd").unwrap();
+        assert_eq!(tdd.locations.len(), 2);
+        assert!(
+            tdd.locations
+                .iter()
+                .any(|l| l.agent == Agent::ClaudeCode && l.path.ends_with(".claude/skills/tdd"))
+        );
+        assert!(tdd.locations.iter().any(
+            |l| l.agent == Agent::ClaudeCode && l.path.to_string_lossy().contains("/plugins/")
+        ));
+        assert_eq!(tdd.source, InstallSource::Plugin);
+    }
+
+    #[test]
     fn enrich_matches_prefixed_gh_skill_name_by_path() {
         let mut records = merge_discovered(vec![DiscoveredSkill {
             id: "tdd".into(),
@@ -314,8 +419,10 @@ mod tests {
                 resolved: None,
             },
             source_url: None,
+            author: None,
             version: None,
             pinned: false,
+            source: None,
         }]);
         enrich_with_gh(
             &mut records,

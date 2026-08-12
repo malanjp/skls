@@ -1,10 +1,15 @@
 //! Filesystem skill scanner for Cursor / Claude Code / Codex.
 
-use crate::model::{Agent, InstallKind, Scope, SkillLocation};
+use crate::model::{Agent, InstallKind, InstallSource, Scope, SkillLocation};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+/// Agents that read the shared `~/.agents` store. Used to attribute
+/// `~/.agents/skills` and `~/.agents/plugins` skills to every consumer host.
+pub(crate) const AGENTS_SHARED_STORE: &[Agent] =
+    &[Agent::Cursor, Agent::Cline, Agent::Warp, Agent::Universal];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveredSkill {
@@ -13,8 +18,12 @@ pub struct DiscoveredSkill {
     pub description: String,
     pub location: SkillLocation,
     pub source_url: Option<String>,
+    pub author: Option<String>,
     pub version: Option<String>,
     pub pinned: bool,
+    /// Explicit provenance override (e.g. plugin-bundled skills). `None`
+    /// means "infer from `source_url` / metadata" in the inventory merge.
+    pub source: Option<InstallSource>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -25,6 +34,7 @@ struct Frontmatter {
     source: Option<String>,
     #[serde(rename = "sourceURL", default)]
     source_url: Option<String>,
+    author: Option<String>,
     version: Option<String>,
     pinned: Option<bool>,
     #[serde(default)]
@@ -136,11 +146,11 @@ pub fn skill_roots(project_root: &Path, home: &Path) -> Vec<(Agent, Scope, PathB
         (Agent::Grok, Scope::User, home.join(".grok/skills")),
         (Agent::Warp, Scope::User, home.join(".warp/skills")),
         (Agent::Devin, Scope::User, home.join(".config/devin/skills")),
-        // Shared `~/.agents/skills` also attributed by gh to these hosts
-        (Agent::Cline, Scope::User, home.join(".agents/skills")),
-        (Agent::Warp, Scope::User, home.join(".agents/skills")),
-        (Agent::Universal, Scope::User, home.join(".agents/skills")),
     ];
+    // Shared `~/.agents/skills` also attributed by gh to these hosts
+    for agent in AGENTS_SHARED_STORE {
+        roots.push((*agent, Scope::User, home.join(".agents/skills")));
+    }
 
     // Stable order for tests / debugging.
     roots.sort_by(|a, b| {
@@ -154,15 +164,23 @@ pub fn skill_roots(project_root: &Path, home: &Path) -> Vec<(Agent, Scope, PathB
 
 pub fn parse_skill_md(
     content: &str,
-) -> Result<(String, String, Option<String>, Option<String>, bool)> {
+) -> Result<(
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    bool,
+)> {
     let fm = extract_frontmatter(content)?;
     let name = fm.name.clone().unwrap_or_else(|| "unnamed".to_string());
     let description = fm.description.unwrap_or_default();
     let meta_repo = fm.metadata.as_ref().and_then(|m| m.github_repo.clone());
     let source_url = fm.source_url.or(fm.source).or(meta_repo);
+    let author = fm.author.filter(|a| !a.is_empty());
     let version = fm.version;
     let pinned = fm.pinned.unwrap_or(false);
-    Ok((name, description, source_url, version, pinned))
+    Ok((name, description, source_url, author, version, pinned))
 }
 
 fn extract_frontmatter(content: &str) -> Result<Frontmatter> {
@@ -173,6 +191,7 @@ fn extract_frontmatter(content: &str) -> Result<Frontmatter> {
             description: None,
             source: None,
             source_url: None,
+            author: None,
             version: None,
             pinned: None,
             metadata: None,
@@ -196,6 +215,7 @@ fn parse_frontmatter_lenient(yaml: &str) -> Frontmatter {
         description: None,
         source: None,
         source_url: None,
+        author: None,
         version: None,
         pinned: None,
         metadata: None,
@@ -220,6 +240,7 @@ fn parse_frontmatter_lenient(yaml: &str) -> Frontmatter {
             "description" => fm.description = Some(value),
             "source" => fm.source = Some(value),
             "sourceURL" | "source_url" => fm.source_url = Some(value),
+            "author" => fm.author = Some(value),
             "github-repo" => {
                 let meta = fm
                     .metadata
@@ -246,7 +267,7 @@ pub fn skill_path_has_github_metadata(skill_dir: &Path) -> bool {
     let Ok(content) = fs::read_to_string(skill_dir.join("SKILL.md")) else {
         return false;
     };
-    matches!(parse_skill_md(&content), Ok((_, _, Some(url), _, _)) if !url.is_empty())
+    matches!(parse_skill_md(&content), Ok((_, _, Some(url), _, _, _)) if !url.is_empty())
 }
 
 pub fn detect_install_kind(path: &Path) -> (InstallKind, Option<PathBuf>) {
@@ -290,7 +311,7 @@ pub fn scan_skills(
     Ok((out, warnings))
 }
 
-fn collect_skills_in_dir(
+pub(crate) fn collect_skills_in_dir(
     root: &Path,
     agent: Agent,
     scope: Scope,
@@ -358,7 +379,7 @@ fn read_discovered(path: &Path, agent: Agent, scope: Scope) -> Result<Option<Dis
         Ok(c) => c,
         Err(_) => return Ok(None),
     };
-    let (name, description, source_url, version, pinned) = match parse_skill_md(&content) {
+    let (name, description, source_url, author, version, pinned) = match parse_skill_md(&content) {
         Ok(v) => v,
         Err(_) => {
             // Fallback: tolerate invalid YAML by using directory name.
@@ -367,7 +388,7 @@ fn read_discovered(path: &Path, agent: Agent, scope: Scope) -> Result<Option<Dis
                 .and_then(|s| s.to_str())
                 .unwrap_or("unnamed")
                 .to_string();
-            (id.clone(), String::new(), None, None, false)
+            (id.clone(), String::new(), None, None, None, false)
         }
     };
     let id = path
@@ -388,8 +409,10 @@ fn read_discovered(path: &Path, agent: Agent, scope: Scope) -> Result<Option<Dis
             resolved,
         },
         source_url,
+        author,
         version,
         pinned,
+        source: None,
     }))
 }
 
@@ -406,7 +429,7 @@ description: Explore ideas before coding
 ---
 # Body
 "#;
-        let (name, desc, _, _, _) = parse_skill_md(content).unwrap();
+        let (name, desc, _, _, _, _) = parse_skill_md(content).unwrap();
         assert_eq!(name, "brainstorming");
         assert!(desc.contains("Explore"));
     }
@@ -418,7 +441,7 @@ name: weird
 description: Use this when: you need colons
 ---
 "#;
-        let (name, desc, _, _, _) = parse_skill_md(content).unwrap();
+        let (name, desc, _, _, _, _) = parse_skill_md(content).unwrap();
         assert_eq!(name, "weird");
         assert!(desc.contains("colons"));
     }
@@ -434,7 +457,7 @@ metadata:
     github-tree-sha: abc123
 ---
 "#;
-        let (name, _, source_url, _, _) = parse_skill_md(content).unwrap();
+        let (name, _, source_url, _, _, _) = parse_skill_md(content).unwrap();
         assert_eq!(name, "tdd");
         assert_eq!(
             source_url.as_deref(),

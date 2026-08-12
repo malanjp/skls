@@ -15,10 +15,10 @@
 
 ## できること
 
-- **一覧**: 27 エージェントホスト（Cursor が読む `~/.agents/skills` も含む）。project / user とエージェントでフィルタ、複数選択で一括操作
+- **一覧**: 27 エージェントホスト（Cursor が読む `~/.agents/skills` も含む）。Claude Code / Cursor / Codex / agents プラグインに同梱されたスキルもスキャン。project / user とエージェントでフィルタ、複数選択で一括操作
 - **指標**: 会話ログから発動率を算出し、削除判断スコア（`delete_score`）を表示する
 - **追加**: 都度 `gh skill` か `npx skills` を選んでインストール。初期選択は cursor / claude-code / codex（`*` で全ホスト）
-- **削除**: インベントリ上のパスを削除（確認必須）。npx 由来は `npx skills remove` も実行。共有ストアパスは警告
+- **削除**: インベントリ上のパスを削除（確認必須）。npx 由来は `npx skills remove` も実行。共有ストア / プラグイン内パスは警告
 - **更新**: `gh skill` / `npx skills` を選んで更新する。インストール元を推定できれば Enter で採用できる
 
 ## 依存
@@ -66,6 +66,8 @@ skls --dump-json                     # TUI なしでインベントリを JSON �
 
 左が一覧、右が詳細。行頭の `[ ]` / `[x]` は複数選択。デフォルトソートは `delete_score`（高いほど削除候補）。
 
+一覧の列は `NAME` · `SCOPE` · `SRC`（出所: `gh` / `npx` / `plugin` / `manual`）· `AUTHOR` · `RATE` · `SCORE`。作者は SKILL.md の frontmatter・プラグインマニフェスト・ソースリポジトリの GitHub owner から取得する。
+
 タイトルの `sample:` は発動率解析の上限、ステータスの `sampled (-N older)` はスキップした古いセッション数を示す。
 
 ## キーバインド
@@ -78,7 +80,7 @@ skls --dump-json                     # TUI なしでインベントリを JSON �
 | `x` | 選択クリア |
 | `/` | 名前・説明の検索 |
 | `f` | フィルタパネル |
-| `s` | ソート切替（`name` → `rate` → `delete_score` → `last_hit`） |
+| `s` | ソート切替（`name` → `rate` → `delete_score` → `last_hit` → `author` → `source`） |
 | `a` | 追加フロー |
 | `d` | 削除確認（選択があれば一括、なければカーソル行） |
 | `u` | 更新（backend 選択。推定があれば Enter で採用） |
@@ -112,7 +114,7 @@ skls --dump-json                     # TUI なしでインベントリを JSON �
 - `j`/`k` で移動、`Space` でトグル、`*` 全選択、`x` 全解除
 - `y` / `Enter` で実行、`n` / `q` / `Esc` でキャンセル
 - インベントリのパスを先に削除し、`source: npx` なら選択エージェントごとに `npx skills remove` も実行する
-- 共有ストア（例: `~/.agents/skills`）上のパスは警告。複数ホストで同じパスは重複排除する
+- 共有ストア（例: `~/.agents/skills`）やプラグイン内のパスは警告。複数ホストで同じパスは重複排除する
 - 削除後は一覧だけ再スキャンする。発動率は `R` で再計算する
 
 ### 更新（`u`）
@@ -159,6 +161,19 @@ skls --dump-json                     # TUI なしでインベントリを JSON �
 - `~/.agents/.skill-lock.json` があれば `source: npx` を付与する（`npx skills list` は起動時に呼ばない）
 
 スコープ語彙は `gh skill` 準拠（`project` / `user`）。`npx skills -g` は user と同一視する。
+
+### プラグイン
+
+エージェントプラグインに同梱されたスキルは、ファイルの実体があるホストに紐付ける:
+
+| ストア | パス | 紐付けホスト |
+|-------|------|-------------|
+| Claude Code | `~/.claude/plugins/`（`installed_plugins.json` を参照、scope はマニフェスト由来） | claude-code |
+| Cursor | `~/.cursor/plugins/cache/*/*/*/skills/` | cursor |
+| Codex | `~/.codex/plugins/cache/*/*/*/skills/` | codex |
+| agents | `~/.agents/plugins/`（`skills/` ディレクトリを lenient に探索） | 共有ストアのホスト（cursor / cline / warp / universal） |
+
+プラグイン由来のスキルは `source: plugin` として扱う。`gh` / `npx` では更新せず、削除時はパスがプラグインインストール内にあることを警告する。
 
 ## 発動率と削除スコア
 
