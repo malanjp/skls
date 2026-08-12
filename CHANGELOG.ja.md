@@ -8,6 +8,20 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-13
+
+### ハイライト
+
+- **プラグイン由来スキル** — エージェントプラグインに同梱されたスキルを一覧に表示するようにした: Claude Code（`~/.claude/plugins/`、scope は `installed_plugins.json` 由来）、Cursor（`~/.cursor/plugins/cache/`）、Codex（`~/.codex/plugins/cache/`）、共有ストア（`~/.agents/plugins/`）。各スキルはファイルの実体があるホストに紐付け、`source: plugin` として扱う
+- **作者・出所の列** — 一覧に `SRC`（gh / npx / plugin / manual）と `AUTHOR` を表示。作者は SKILL.md の frontmatter・プラグインマニフェスト・ソースリポジトリの GitHub owner から取得する
+
+### 追加
+
+- エージェントプラグインに同梱されたスキルをスキャンするようにした: Claude Code（`~/.claude/plugins/`、scope は `installed_plugins.json` 由来）、Cursor（`~/.cursor/plugins/cache/`）、Codex（`~/.codex/plugins/cache/`）、共有ストア（`~/.agents/plugins/`）。プラグイン由来のスキルは `source: plugin` として扱い、ファイルの実体があるホストに紐付ける
+- 削除確認でプラグインインストール内のパスを警告するようにした。プラグイン由来スキルは `gh` / `npx` の更新提案と更新対象ディレクトリから除外する
+- 一覧に `SRC`（出所: gh / npx / plugin / manual）と `AUTHOR` 列を追加。詳細パネルと `--dump-json` にも作者を出力する。作者は SKILL.md の frontmatter・プラグインマニフェスト・ソースリポジトリの GitHub owner から取得
+- ソート切替（`s`）に `author`（未設定は末尾）と `source`（gh → npx → plugin → manual の順）を追加
+
 ## [0.3.2] - 2026-08-05
 
 ### 修正

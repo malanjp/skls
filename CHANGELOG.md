@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-13
+
+### Highlights
+
+- **Plugin skills** — skills bundled inside agent plugins now show up: Claude Code (`~/.claude/plugins/`, scope from `installed_plugins.json`), Cursor (`~/.cursor/plugins/cache/`), Codex (`~/.codex/plugins/cache/`), and the shared agents store (`~/.agents/plugins/`). Each is attributed to the host that owns the files and marked `source: plugin`
+- **Author and source columns** — the list shows `SRC` (gh / npx / plugin / manual) and `AUTHOR`. Author is read from SKILL.md frontmatter, the plugin manifest, or the GitHub owner of the source repo
+
+### Added
+
+- Scan skills bundled inside agent plugins: Claude Code (`~/.claude/plugins/`, scope from `installed_plugins.json`), Cursor (`~/.cursor/plugins/cache/`), Codex (`~/.codex/plugins/cache/`), and the shared agents store (`~/.agents/plugins/`). Plugin skills are marked `source: plugin` and attributed to the host owning the files
+- Delete confirms warn when a path lives inside a plugin install; plugin skills are excluded from `gh`/`npx` update suggestions and update dirs
+- List shows `SRC` (source: gh / npx / plugin / manual) and `AUTHOR` columns; the detail panel and `--dump-json` include author. Author is read from SKILL.md frontmatter, the plugin manifest, or the GitHub owner of the source repo
+- Sort cycle (`s`) extended with `author` (unknowns last) and `source` (gh → npx → plugin → manual)
+
 ## [0.3.2] - 2026-08-05
 
 ### Fixed
