@@ -1,13 +1,14 @@
 //! ratatui rendering for skls.
 
+use crate::analytics::delete_advice;
 use crate::app::{App, Mode};
-use crate::model::Agent;
+use crate::model::{Agent, agents_label};
 use crate::ops::AddBackend;
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, HighlightSpacing, List, ListItem, Paragraph, Wrap};
-use ratatui::Frame;
 
 /// Highlight symbol for skill / search lists. ASCII so display width is stable
 /// across fonts (▶ is Ambiguous-width and often shifts columns in screenshots).
@@ -137,9 +138,7 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
             let paths = s
                 .locations
                 .iter()
-                .map(|l| {
-                    format!("  · {} ({})  {}", l.agent, l.kind, l.path.display())
-                })
+                .map(|l| format!("  · {} ({})  {}", l.agent, l.kind, l.path.display()))
                 .collect::<Vec<_>>()
                 .join("\n");
             let last = s
@@ -152,13 +151,7 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
                 .activation_rate
                 .map(|r| format!("{:.1}%", r * 100.0))
                 .unwrap_or_else(|| "n/a".into());
-            let advice = if s.stats.delete_score >= 60.0 {
-                "consider delete"
-            } else if s.stats.delete_score >= 35.0 {
-                "review"
-            } else {
-                "keep"
-            };
+            let advice = delete_advice(s.stats.delete_score);
             let checked = if app.is_checked(s) { "yes" } else { "-" };
             format!(
                 "{}\n\
@@ -216,9 +209,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         format!("  !{}", truncate(&app.warnings[0], 40))
     };
     let text = match app.mode {
-        Mode::DeleteConfirm => {
-            " j/k  Space  */x all/none  [y]/Enter confirm  [n]/Esc ".to_string()
-        }
+        Mode::DeleteConfirm => " j/k  Space  */x all/none  [y]/Enter confirm  [n]/Esc ".to_string(),
         Mode::Help | Mode::Message => " Enter / Esc / q close ".to_string(),
         Mode::Busy => " working — please wait … ".to_string(),
         Mode::Filter => {
@@ -226,15 +217,11 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         }
         Mode::Search => " type  Enter=apply  Esc=cancel ".to_string(),
         Mode::AddBackend => " [1] gh  [2] npx   Esc/q cancel ".to_string(),
-        Mode::UpdateAgents => {
-            " j/k  Space  */x all/none  Enter=next  Esc/q ".to_string()
-        }
+        Mode::UpdateAgents => " j/k  Space  */x all/none  Enter=next  Esc/q ".to_string(),
         Mode::UpdateBackend => " [1] gh  [2] npx  Enter=suggested  Esc=back  q=cancel ".to_string(),
         Mode::AddQuery => " type  Enter=next  Esc=back  q=cancel ".to_string(),
         Mode::AddResults => " j/k select  Enter=next  Esc=back  q=cancel ".to_string(),
-        Mode::AddAgent => {
-            " j/k  Space  */x all/none  Enter=next  Esc=back ".to_string()
-        }
+        Mode::AddAgent => " j/k  Space  */x all/none  Enter=next  Esc=back ".to_string(),
         Mode::AddScope => " [p]project [u]user  Esc=back  q=cancel ".to_string(),
         Mode::List => format!(
             " j/k  Space/* /x select  / search  f filter  s sort  a add  d del  u upd  r/R refresh  ?  q{warn} "
@@ -247,14 +234,12 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
 fn draw_panel(frame: &mut Frame, title: &str, body: String, border: Color) {
     let area = centered(frame.area(), 72, 55);
     frame.render_widget(Clear, area);
-    let p = Paragraph::new(body)
-        .wrap(Wrap { trim: false })
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(format!(" {title} "))
-                .border_style(Style::default().fg(border)),
-        );
+    let p = Paragraph::new(body).wrap(Wrap { trim: false }).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" {title} "))
+            .border_style(Style::default().fg(border)),
+    );
     frame.render_widget(p, area);
 }
 
@@ -382,13 +367,6 @@ fn draw_filter_modal(frame: &mut Frame, app: &App) {
     draw_panel(frame, "filter", body, Color::Cyan);
 }
 
-fn add_total_steps(backend: AddBackend) -> u8 {
-    match backend {
-        AddBackend::GhSkill => 5,
-        AddBackend::NpxSkills => 4,
-    }
-}
-
 fn add_source_summary(app: &App) -> String {
     if app.add_package.is_empty() && app.add_query.is_empty() {
         return "-".into();
@@ -438,12 +416,9 @@ fn draw_add_backend_modal(frame: &mut Frame, app: &App) {
 }
 
 fn draw_add_query_modal(frame: &mut Frame, app: &App) {
-    let total = add_total_steps(app.add_backend);
+    let (step, total) = app.add_wizard_step();
     let (what, examples) = match app.add_backend {
-        AddBackend::GhSkill => (
-            "enter search keywords",
-            "e.g.  tdd\ne.g.  cloudflare",
-        ),
+        AddBackend::GhSkill => ("enter search keywords", "e.g.  tdd\ne.g.  cloudflare"),
         AddBackend::NpxSkills => (
             "enter package (source)",
             "e.g.  vercel-labs/skills\ne.g.  mattpocock/skills@tdd\n      └ owner/repo or owner/repo@skill",
@@ -452,7 +427,7 @@ fn draw_add_query_modal(frame: &mut Frame, app: &App) {
     let body = format!(
         "Add a skill  ·  {}\n\
          ────────────────────────\n\
-         Step 2 / {total}  ·  {what}\n\
+         Step {step} / {total}  ·  {what}\n\
          \n\
          {examples}\n\
          \n\
@@ -465,7 +440,7 @@ fn draw_add_query_modal(frame: &mut Frame, app: &App) {
         app.add_backend.as_str(),
         app.input
     );
-    draw_add_panel(frame, &format!("add 2/{total}"), body);
+    draw_add_panel(frame, &format!("add {step}/{total}"), body);
 }
 
 fn draw_add_results_modal(frame: &mut Frame, app: &mut App) {
@@ -480,10 +455,11 @@ fn draw_add_results_modal(frame: &mut Frame, app: &mut App) {
         ])
         .split(area);
 
+    let (step, total) = app.add_wizard_step();
     let header = Paragraph::new(format!(
         "Add a skill  ·  gh skill\n\
          ────────────────────────\n\
-         Step 3 / 5  ·  pick from search results\n\
+         Step {step} / {total}  ·  pick from search results\n\
          query: \"{}\"   ({} hits)",
         app.add_query,
         app.add_results.len()
@@ -491,7 +467,7 @@ fn draw_add_results_modal(frame: &mut Frame, app: &mut App) {
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .title(" add 3/5 ")
+            .title(format!(" add {step}/{total} "))
             .border_style(Style::default().fg(Color::Cyan)),
     );
     frame.render_widget(header, chunks[0]);
@@ -532,11 +508,7 @@ fn draw_add_results_modal(frame: &mut Frame, app: &mut App) {
 }
 
 fn draw_add_agent_modal(frame: &mut Frame, app: &App) {
-    let total = add_total_steps(app.add_backend);
-    let step = match app.add_backend {
-        AddBackend::GhSkill => 4,
-        AddBackend::NpxSkills => 3,
-    };
+    let (step, total) = app.add_wizard_step();
     // Show all known hosts; default selection is Agent::primary().
     let toggles = format_agent_toggles(&app.add_agents, Agent::all(), app.agent_focus);
     let body = format!(
@@ -557,11 +529,7 @@ fn draw_add_agent_modal(frame: &mut Frame, app: &App) {
 }
 
 fn draw_add_scope_modal(frame: &mut Frame, app: &App) {
-    let total = add_total_steps(app.add_backend);
-    let step = match app.add_backend {
-        AddBackend::GhSkill => 5,
-        AddBackend::NpxSkills => 4,
-    };
+    let (step, total) = app.add_wizard_step();
     let agents = agents_label(&app.add_agents);
     let body = format!(
         "Add a skill  ·  {}\n\
@@ -680,10 +648,7 @@ fn draw_delete_modal(frame: &mut Frame, app: &App) {
                 plans[0].skill_name, plans[0].scope
             ));
         } else {
-            lines.push(format!(
-                "Target  {} skills   agents: {filter}",
-                plans.len()
-            ));
+            lines.push(format!("Target  {} skills   agents: {filter}", plans.len()));
         }
         lines.push(String::new());
         lines.push("Agents".into());
@@ -710,7 +675,7 @@ fn draw_delete_modal(frame: &mut Frame, app: &App) {
         lines.push(String::new());
         lines.push("Paths".into());
         let mut path_count = 0usize;
-        for plan in &plans {
+        for plan in plans {
             for path in &plan.paths {
                 if path_count >= 8 {
                     break;
@@ -734,7 +699,10 @@ fn draw_delete_modal(frame: &mut Frame, app: &App) {
             lines.push(String::new());
             lines.push(format!("Warning  {}", warns[0]));
             if warns.len() > 1 {
-                lines.push(format!("  (+{} more shared-path warnings)", warns.len() - 1));
+                lines.push(format!(
+                    "  (+{} more shared-path warnings)",
+                    warns.len() - 1
+                ));
             }
         }
         lines.push(String::new());
@@ -760,18 +728,6 @@ fn format_agent_toggles(selected: &[Agent], available: &[Agent], focus: usize) -
         })
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-fn agents_label(agents: &[Agent]) -> String {
-    if agents.is_empty() {
-        "(none)".into()
-    } else {
-        agents
-            .iter()
-            .map(|a| a.as_str())
-            .collect::<Vec<_>>()
-            .join(",")
-    }
 }
 
 fn centered(area: Rect, percent_x: u16, percent_y: u16) -> Rect {

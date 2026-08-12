@@ -3,13 +3,13 @@
 use crate::adapters::command::SystemCommandRunner;
 use crate::adapters::gh_skill::{GhSkillCli, GhSkillSearchItem};
 use crate::analytics::{
-    analyze_logs_with_limits, apply_scores, apply_stats, AnalyzeLimits, LogPaths,
+    AnalyzeLimits, LogPaths, analyze_logs_with_limits, apply_scores, apply_stats,
 };
-use crate::inventory::{build_inventory, InventoryOptions};
-use crate::model::{Agent, Scope, SkillFilters, SkillRecord, SortKey};
+use crate::inventory::{InventoryOptions, build_inventory};
+use crate::model::{Agent, Scope, SkillFilters, SkillKey, SkillRecord, SortKey};
 use crate::ops::{
-    execute_add, plan_delete, prefer_update_dirs, suggested_update_backend_for, AddBackend,
-    DeletePlan, UpdateJob,
+    AddBackend, DeletePlan, UpdateJob, plan_delete, prefer_update_dirs,
+    suggested_update_backend_for,
 };
 use anyhow::Result;
 use chrono::Utc;
@@ -17,13 +17,6 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::widgets::ListState;
 use std::collections::HashSet;
 use std::path::PathBuf;
-
-/// Unique skill identity in the inventory (name id + scope).
-pub type SkillKey = (String, Scope);
-
-pub fn skill_key(skill: &SkillRecord) -> SkillKey {
-    (skill.id.clone(), skill.scope)
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -49,6 +42,13 @@ pub enum PendingAction {
     Update {
         backend: AddBackend,
         jobs: Vec<UpdateJob>,
+    },
+    Add {
+        backend: AddBackend,
+        package: String,
+        skill: String,
+        agents: Vec<Agent>,
+        scope: Scope,
     },
     /// Compute activation stats after the inventory is already on screen.
     AnalyzeActivations,
@@ -93,6 +93,8 @@ pub struct App {
     pub delete_skills: Vec<SkillRecord>,
     /// Agents selected for the pending delete (toggle; empty = nothing).
     pub delete_agents: Vec<Agent>,
+    /// Cached `DeletePlan`s for the confirm modal, recomputed on transition.
+    pub delete_plans_cache: Vec<DeletePlan>,
     /// Cursor into the available-agents list for j/k + Space toggles.
     pub agent_focus: usize,
     /// Multi-select marks keyed by (id, scope).
@@ -148,6 +150,7 @@ impl App {
             add_scope: Scope::User,
             delete_skills: Vec::new(),
             delete_agents: Vec::new(),
+            delete_plans_cache: Vec::new(),
             agent_focus: 0,
             checked: HashSet::new(),
             message: String::new(),
@@ -166,6 +169,7 @@ impl App {
     pub fn cancel_delete(&mut self) {
         self.delete_skills.clear();
         self.delete_agents.clear();
+        self.delete_plans_cache.clear();
         self.mode = Mode::List;
         self.status = "delete cancelled".into();
     }
@@ -179,7 +183,7 @@ impl App {
     }
 
     pub fn is_checked(&self, skill: &SkillRecord) -> bool {
-        self.checked.contains(&skill_key(skill))
+        self.checked.contains(&skill.key())
     }
 
     pub fn checked_count(&self) -> usize {
@@ -193,13 +197,19 @@ impl App {
         }
         self.skills
             .iter()
-            .filter(|s| self.checked.contains(&skill_key(s)))
+            .filter(|s| self.checked.contains(&s.key()))
             .cloned()
             .collect()
     }
 
-    pub fn delete_plans(&self) -> Vec<DeletePlan> {
-        self.delete_skills
+    /// Cached delete plans for the confirm modal (recomputed on state change).
+    pub fn delete_plans(&self) -> &[DeletePlan] {
+        &self.delete_plans_cache
+    }
+
+    fn refresh_delete_plans(&mut self) {
+        self.delete_plans_cache = self
+            .delete_skills
             .iter()
             .filter_map(|skill| {
                 let agents: Vec<Agent> = skill
@@ -213,11 +223,11 @@ impl App {
                 }
                 Some(plan_delete(skill, &agents))
             })
-            .collect()
+            .collect();
     }
 
     fn prune_checked(&mut self) {
-        let live: HashSet<SkillKey> = self.skills.iter().map(skill_key).collect();
+        let live: HashSet<SkillKey> = self.skills.iter().map(SkillRecord::key).collect();
         self.checked.retain(|k| live.contains(k));
     }
 
@@ -225,7 +235,7 @@ impl App {
         let Some(skill) = self.selected_skill() else {
             return;
         };
-        let key = skill_key(skill);
+        let key = skill.key();
         if !self.checked.remove(&key) {
             self.checked.insert(key);
         }
@@ -236,10 +246,9 @@ impl App {
         let keys: Vec<SkillKey> = self
             .filtered_indices
             .iter()
-            .filter_map(|&i| self.skills.get(i).map(skill_key))
+            .filter_map(|&i| self.skills.get(i).map(SkillRecord::key))
             .collect();
-        let all_selected =
-            !keys.is_empty() && keys.iter().all(|k| self.checked.contains(k));
+        let all_selected = !keys.is_empty() && keys.iter().all(|k| self.checked.contains(k));
         if all_selected {
             for k in keys {
                 self.checked.remove(&k);
@@ -271,7 +280,6 @@ impl App {
     /// Inventory only, then queue background-style activation analysis.
     pub fn bootstrap_fast(&mut self) -> Result<()> {
         self.reload_light()?;
-        self.set_busy("Analyzing activations (recent sessions) …");
         self.pending_action = Some(PendingAction::AnalyzeActivations);
         Ok(())
     }
@@ -303,8 +311,7 @@ impl App {
                 );
             }
             Err(err) => {
-                self.warnings
-                    .push(format!("log analysis failed: {err}"));
+                self.warnings.push(format!("log analysis failed: {err}"));
                 self.status = format!("activation analysis failed: {err}");
             }
         }
@@ -313,11 +320,11 @@ impl App {
     }
 
     fn reload_with_options(&mut self, analyze: bool) -> Result<()> {
-        let previous_stats: std::collections::HashMap<(String, Scope), crate::model::SkillStats> =
-            self.skills
-                .iter()
-                .map(|s| ((s.id.clone(), s.scope), s.stats.clone()))
-                .collect();
+        let previous_stats: std::collections::HashMap<SkillKey, crate::model::SkillStats> = self
+            .skills
+            .iter()
+            .map(|s| (s.key(), s.stats.clone()))
+            .collect();
 
         let runner = SystemCommandRunner;
         let opts = InventoryOptions {
@@ -345,13 +352,11 @@ impl App {
                         ));
                     }
                 }
-                Err(err) => self
-                    .warnings
-                    .push(format!("log analysis failed: {err}")),
+                Err(err) => self.warnings.push(format!("log analysis failed: {err}")),
             }
         } else {
             for skill in &mut skills {
-                if let Some(stats) = previous_stats.get(&(skill.id.clone(), skill.scope)) {
+                if let Some(stats) = previous_stats.get(&skill.key()) {
                     skill.stats = stats.clone();
                 }
             }
@@ -451,7 +456,7 @@ impl App {
             Mode::AddQuery => self.handle_add_query_key(key)?,
             Mode::AddResults => self.handle_add_results_key(key),
             Mode::AddAgent => self.handle_add_agent_key(key),
-            Mode::AddScope => self.handle_add_scope_key(key)?,
+            Mode::AddScope => self.handle_add_scope_key(key),
             Mode::UpdateAgents => self.handle_update_agents_key(key),
             Mode::UpdateBackend => self.handle_update_backend_key(key),
             Mode::DeleteConfirm => self.handle_delete_key(key)?,
@@ -495,7 +500,6 @@ impl App {
                 self.status = format!("{} (light refresh; R = recompute activations)", self.status);
             }
             KeyCode::Char('R') => {
-                self.set_busy("Recomputing activations …");
                 self.pending_action = Some(PendingAction::AnalyzeActivations);
             }
             KeyCode::Char('a') => {
@@ -704,8 +708,7 @@ impl App {
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 if !self.add_results.is_empty() {
-                    self.add_result_idx =
-                        (self.add_result_idx + 1) % self.add_results.len();
+                    self.add_result_idx = (self.add_result_idx + 1) % self.add_results.len();
                     self.add_list_state.select(Some(self.add_result_idx));
                 }
             }
@@ -743,13 +746,12 @@ impl App {
             KeyCode::Char('q') => self.cancel_add(),
             KeyCode::Esc => {
                 // gh flow has a results step; npx goes straight from query.
-                self.mode = if self.add_backend == AddBackend::GhSkill
-                    && !self.add_results.is_empty()
-                {
-                    Mode::AddResults
-                } else {
-                    Mode::AddQuery
-                };
+                self.mode =
+                    if self.add_backend == AddBackend::GhSkill && !self.add_results.is_empty() {
+                        Mode::AddResults
+                    } else {
+                        Mode::AddQuery
+                    };
                 if self.mode == Mode::AddQuery {
                     self.input = self.add_query.clone();
                 }
@@ -765,45 +767,45 @@ impl App {
         }
     }
 
-    fn handle_add_scope_key(&mut self, key: KeyEvent) -> Result<()> {
+    fn handle_add_scope_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Char('q') => self.cancel_add(),
             KeyCode::Esc => self.mode = Mode::AddAgent,
             KeyCode::Char('p') => {
                 self.add_scope = Scope::Project;
-                self.finish_add()?;
+                self.finish_add();
             }
             KeyCode::Char('u') => {
                 self.add_scope = Scope::User;
-                self.finish_add()?;
+                self.finish_add();
             }
             _ => {}
         }
-        Ok(())
     }
 
-    fn finish_add(&mut self) -> Result<()> {
-        let runner = SystemCommandRunner;
+    /// Queue the add as a pending operation; the executor runs the CLI, does the
+    /// full reload, and composes the result message.
+    fn finish_add(&mut self) {
         let skill = if self.add_skill.is_empty() {
             "*".to_string()
         } else {
-            self.add_skill.clone()
+            std::mem::take(&mut self.add_skill)
         };
-        match execute_add(
-            &runner,
-            self.add_backend,
-            &self.add_package,
-            &skill,
-            &self.add_agents,
-            self.add_scope,
-        ) {
-            Ok(msg) => {
-                let _ = self.reload();
-                self.show_message(msg);
-            }
-            Err(err) => self.show_message(format!("add failed: {err}")),
-        }
-        Ok(())
+        let package = std::mem::take(&mut self.add_package);
+        let agents = std::mem::take(&mut self.add_agents);
+        let backend = self.add_backend;
+        let scope = self.add_scope;
+        self.add_query.clear();
+        self.add_results.clear();
+        self.add_result_idx = 0;
+        self.mode = Mode::List;
+        self.pending_action = Some(PendingAction::Add {
+            backend,
+            package,
+            skill,
+            agents,
+            scope,
+        });
     }
 
     fn begin_delete(&mut self) {
@@ -822,6 +824,7 @@ impl App {
         self.delete_agents = union_agents(deletable.iter());
         self.delete_skills = deletable;
         self.agent_focus = 0;
+        self.refresh_delete_plans();
         self.mode = Mode::DeleteConfirm;
     }
 
@@ -833,6 +836,7 @@ impl App {
             &available,
             &mut self.agent_focus,
         ) {
+            self.refresh_delete_plans();
             return Ok(());
         }
         match key.code {
@@ -841,18 +845,13 @@ impl App {
                 self.cancel_delete();
             }
             KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                let plans = self.delete_plans();
+                let plans = std::mem::take(&mut self.delete_plans_cache);
                 self.delete_skills.clear();
                 self.delete_agents.clear();
                 if plans.is_empty() {
                     self.show_message("nothing to delete for selected agents".into());
                 } else {
-                    let label = if plans.len() == 1 {
-                        format!("Deleting '{}' …", plans[0].skill_name)
-                    } else {
-                        format!("Deleting {} skills …", plans.len())
-                    };
-                    self.set_busy(label);
+                    self.mode = Mode::List;
                     self.pending_action = Some(PendingAction::Delete(plans));
                 }
             }
@@ -987,18 +986,33 @@ impl App {
             self.mode = Mode::List;
             return;
         }
-        let label = if jobs.len() == 1 {
-            format!("Updating '{}' via {} …", jobs[0].name, backend.as_str())
-        } else {
-            format!("Updating {} skills via {} …", jobs.len(), backend.as_str())
-        };
-        self.set_busy(label);
+        self.mode = Mode::List;
         self.pending_action = Some(PendingAction::Update { backend, jobs });
     }
 
     pub fn show_message(&mut self, msg: String) {
         self.message = crate::adapters::command::strip_ansi(&msg);
         self.mode = Mode::Message;
+    }
+
+    /// Current / total step numbers for the add wizard, owned by the state
+    /// machine (rendering just displays them).
+    pub fn add_wizard_step(&self) -> (u8, u8) {
+        let total = match self.add_backend {
+            AddBackend::GhSkill => 5,
+            AddBackend::NpxSkills => 4,
+        };
+        let current = match (self.mode, self.add_backend) {
+            (Mode::AddBackend, _) => 1,
+            (Mode::AddQuery, _) => 2,
+            (Mode::AddResults, AddBackend::GhSkill) => 3,
+            (Mode::AddAgent, AddBackend::GhSkill) => 4,
+            (Mode::AddAgent, AddBackend::NpxSkills) => 3,
+            (Mode::AddScope, AddBackend::GhSkill) => 5,
+            (Mode::AddScope, AddBackend::NpxSkills) => 4,
+            _ => 1,
+        };
+        (current, total)
     }
 }
 
@@ -1191,7 +1205,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_confirm_enters_busy() {
+    fn delete_confirm_queues_pending_action() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let mut app = sample_app();
         app.skills[0].agents = vec![Agent::Cursor];
@@ -1207,8 +1221,8 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE))
             .unwrap();
         assert!(matches!(app.pending_action, Some(PendingAction::Delete(_))));
-        assert_eq!(app.mode, Mode::Busy);
-        assert!(app.busy_message.contains("Deleting"));
+        assert!(app.delete_skills.is_empty());
+        assert!(app.delete_plans_cache.is_empty());
     }
 
     #[test]

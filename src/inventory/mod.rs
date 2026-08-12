@@ -1,11 +1,12 @@
 //! Merge FS discoveries with gh skill metadata into SkillRecords.
 
-use crate::adapters::fs::{scan_skills, DiscoveredSkill};
-use crate::adapters::gh_skill::{GhSkillCli, GhSkillListItem};
-use crate::adapters::skill_lock::{load_locks, SkillLock};
 use crate::adapters::CommandRunner;
+use crate::adapters::fs::{DiscoveredSkill, scan_skills};
+use crate::adapters::gh_skill::{GhSkillCli, GhSkillListItem};
+use crate::adapters::skill_lock::{SkillLock, load_locks};
 use crate::model::{
-    Agent, InstallKind, InstallSource, Scope, SkillLocation, SkillRecord, SkillStats,
+    Agent, InstallKind, InstallSource, Scope, SkillKey, SkillLocation, SkillRecord, SkillStats,
+    normalize_skill_id,
 };
 use anyhow::Result;
 use std::collections::HashMap;
@@ -44,10 +45,10 @@ pub fn build_inventory(
 }
 
 pub fn merge_discovered(discovered: Vec<DiscoveredSkill>) -> Vec<SkillRecord> {
-    let mut map: HashMap<(String, Scope), SkillRecord> = HashMap::new();
+    let mut map: HashMap<SkillKey, SkillRecord> = HashMap::new();
 
     for d in discovered {
-        let key = (normalize_id(&d.id, &d.name), d.location.scope);
+        let key = (normalize_skill_id(&d.id, &d.name), d.location.scope);
         let entry = map.entry(key.clone()).or_insert_with(|| SkillRecord {
             id: key.0.clone(),
             name: d.name.clone(),
@@ -90,7 +91,11 @@ pub fn merge_discovered(discovered: Vec<DiscoveredSkill>) -> Vec<SkillRecord> {
         r.locations
             .sort_by(|a, b| a.agent.as_str().cmp(b.agent.as_str()));
     }
-    records.sort_by(|a, b| a.name.cmp(&b.name).then(a.scope.as_str().cmp(b.scope.as_str())));
+    records.sort_by(|a, b| {
+        a.name
+            .cmp(&b.name)
+            .then(a.scope.as_str().cmp(b.scope.as_str()))
+    });
     records
 }
 
@@ -101,10 +106,7 @@ pub fn enrich_with_gh(records: &mut [SkillRecord], items: &[GhSkillListItem]) {
             "user" => Scope::User,
             _ => continue,
         };
-        if let Some(rec) = records
-            .iter_mut()
-            .find(|r| gh_item_matches(r, item, scope))
-        {
+        if let Some(rec) = records.iter_mut().find(|r| gh_item_matches(r, item, scope)) {
             apply_gh_item(rec, item, scope);
         }
     }
@@ -119,13 +121,9 @@ fn gh_item_matches(rec: &SkillRecord, item: &GhSkillListItem, scope: Scope) -> b
         .rsplit('/')
         .next()
         .unwrap_or(&item.skill_name);
-    let full_id = normalize_id(&item.skill_name, &item.skill_name);
-    let leaf_id = normalize_id(leaf, leaf);
-    if rec.id == full_id
-        || rec.id == leaf_id
-        || rec.name == item.skill_name
-        || rec.name == leaf
-    {
+    let full_id = normalize_skill_id(&item.skill_name, &item.skill_name);
+    let leaf_id = normalize_skill_id(leaf, leaf);
+    if rec.id == full_id || rec.id == leaf_id || rec.name == item.skill_name || rec.name == leaf {
         return true;
     }
     if item.path.is_empty() {
@@ -188,11 +186,6 @@ fn apply_gh_item(rec: &mut SkillRecord, item: &GhSkillListItem, scope: Scope) {
         }
     }
     rec.agents.sort_by_key(|a| a.as_str());
-}
-
-fn normalize_id(id: &str, name: &str) -> String {
-    let base = if id.is_empty() { name } else { id };
-    base.trim_start_matches('.').to_lowercase()
 }
 
 fn infer_source(d: &DiscoveredSkill) -> InstallSource {
@@ -277,14 +270,12 @@ mod tests {
 
     #[test]
     fn enrich_skill_lock_marks_npx_without_overriding_gh() {
-        let mut records = merge_discovered(vec![
-            disc("find-skills", Agent::ClaudeCode, Scope::User),
-            {
+        let mut records =
+            merge_discovered(vec![disc("find-skills", Agent::ClaudeCode, Scope::User), {
                 let mut d = disc("tdd", Agent::Cursor, Scope::User);
                 d.source_url = Some("https://github.com/ex/skills".into());
                 d
-            },
-        ]);
+            }]);
         let mut lock = SkillLock::default();
         lock.skills.insert(
             "find-skills".into(),

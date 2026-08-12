@@ -128,7 +128,11 @@ pub fn skill_roots(project_root: &Path, home: &Path) -> Vec<(Agent, Scope, PathB
         (Agent::Qoder, Scope::User, home.join(".qoder/skills")),
         (Agent::Roo, Scope::User, home.join(".roo/skills")),
         (Agent::Trae, Scope::User, home.join(".trae/skills")),
-        (Agent::CodeBuddy, Scope::User, home.join(".codebuddy/skills")),
+        (
+            Agent::CodeBuddy,
+            Scope::User,
+            home.join(".codebuddy/skills"),
+        ),
         (Agent::Grok, Scope::User, home.join(".grok/skills")),
         (Agent::Warp, Scope::User, home.join(".warp/skills")),
         (Agent::Devin, Scope::User, home.join(".config/devin/skills")),
@@ -148,17 +152,13 @@ pub fn skill_roots(project_root: &Path, home: &Path) -> Vec<(Agent, Scope, PathB
     roots
 }
 
-pub fn parse_skill_md(content: &str) -> Result<(String, String, Option<String>, Option<String>, bool)> {
+pub fn parse_skill_md(
+    content: &str,
+) -> Result<(String, String, Option<String>, Option<String>, bool)> {
     let fm = extract_frontmatter(content)?;
-    let name = fm
-        .name
-        .clone()
-        .unwrap_or_else(|| "unnamed".to_string());
+    let name = fm.name.clone().unwrap_or_else(|| "unnamed".to_string());
     let description = fm.description.unwrap_or_default();
-    let meta_repo = fm
-        .metadata
-        .as_ref()
-        .and_then(|m| m.github_repo.clone());
+    let meta_repo = fm.metadata.as_ref().and_then(|m| m.github_repo.clone());
     let source_url = fm.source_url.or(fm.source).or(meta_repo);
     let version = fm.version;
     let pinned = fm.pinned.unwrap_or(false);
@@ -221,9 +221,9 @@ fn parse_frontmatter_lenient(yaml: &str) -> Frontmatter {
             "source" => fm.source = Some(value),
             "sourceURL" | "source_url" => fm.source_url = Some(value),
             "github-repo" => {
-                let meta = fm.metadata.get_or_insert(SkillMetadata {
-                    github_repo: None,
-                });
+                let meta = fm
+                    .metadata
+                    .get_or_insert(SkillMetadata { github_repo: None });
                 meta.github_repo = Some(value);
             }
             "version" => fm.version = Some(value),
@@ -239,6 +239,16 @@ fn parse_frontmatter_lenient(yaml: &str) -> Frontmatter {
     fm
 }
 
+/// Whether a skill dir carries GitHub provenance in its SKILL.md frontmatter.
+/// Single source of truth for the "gh-installed" read used by update dir
+/// preference and backend guessing.
+pub fn skill_path_has_github_metadata(skill_dir: &Path) -> bool {
+    let Ok(content) = fs::read_to_string(skill_dir.join("SKILL.md")) else {
+        return false;
+    };
+    matches!(parse_skill_md(&content), Ok((_, _, Some(url), _, _)) if !url.is_empty())
+}
+
 pub fn detect_install_kind(path: &Path) -> (InstallKind, Option<PathBuf>) {
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_symlink() => {
@@ -246,9 +256,7 @@ pub fn detect_install_kind(path: &Path) -> (InstallKind, Option<PathBuf>) {
                 if target.is_absolute() {
                     target
                 } else {
-                    path.parent()
-                        .unwrap_or_else(|| Path::new("."))
-                        .join(target)
+                    path.parent().unwrap_or_else(|| Path::new(".")).join(target)
                 }
             });
             (InstallKind::Symlink, resolved)
@@ -258,7 +266,10 @@ pub fn detect_install_kind(path: &Path) -> (InstallKind, Option<PathBuf>) {
     }
 }
 
-pub fn scan_skills(project_root: &Path, home: &Path) -> Result<(Vec<DiscoveredSkill>, Vec<String>)> {
+pub fn scan_skills(
+    project_root: &Path,
+    home: &Path,
+) -> Result<(Vec<DiscoveredSkill>, Vec<String>)> {
     let mut out = Vec::new();
     let mut warnings = Vec::new();
     let mut seen_paths = std::collections::HashSet::new();
@@ -332,9 +343,7 @@ fn collect_skills_in_dir(
                     match read_discovered(&nested_path, agent, scope) {
                         Ok(Some(discovered)) => out.push(discovered),
                         Ok(None) => {}
-                        Err(err) => {
-                            warnings.push(format!("skip {}: {err}", nested_path.display()))
-                        }
+                        Err(err) => warnings.push(format!("skip {}: {err}", nested_path.display())),
                     }
                 }
             }
@@ -458,10 +467,7 @@ metadata:
         assert!(found.iter().any(|s| s.name == "alpha"));
         let beta = found.iter().find(|s| s.name == "beta").unwrap();
         assert_eq!(beta.location.kind, InstallKind::Symlink);
-        assert_eq!(
-            beta.source_url.as_deref(),
-            Some("https://example.com/beta")
-        );
+        assert_eq!(beta.source_url.as_deref(), Some("https://example.com/beta"));
     }
 
     #[test]
@@ -493,19 +499,23 @@ metadata:
         );
         assert!(shared.iter().any(|s| s.location.agent == Agent::Cursor));
         assert!(shared.iter().any(|s| s.location.agent == Agent::Universal));
-        assert!(shared
-            .iter()
-            .all(|s| s.location.path.ends_with(".agents/skills/shared-only")));
+        assert!(
+            shared
+                .iter()
+                .all(|s| s.location.path.ends_with(".agents/skills/shared-only"))
+        );
 
         let managed = found
             .iter()
             .find(|s| s.name == "managed")
             .expect("skills-cursor skill");
         assert_eq!(managed.location.agent, Agent::Cursor);
-        assert!(managed
-            .location
-            .path
-            .ends_with(".cursor/skills-cursor/managed"));
+        assert!(
+            managed
+                .location
+                .path
+                .ends_with(".cursor/skills-cursor/managed")
+        );
     }
 
     #[test]

@@ -3,14 +3,14 @@ use clap::Parser;
 use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 use skls::adapters::command::SystemCommandRunner;
 use skls::analytics::AnalyzeLimits;
 use skls::app::{App, PendingAction};
-use skls::ops::{execute_delete, execute_update};
+use skls::executor;
 use skls::ui::draw;
 use std::io::{self, stdout};
 use std::path::PathBuf;
@@ -97,12 +97,11 @@ fn run_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App
             continue;
         }
 
-        if event::poll(Duration::from_millis(250))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    app.handle_key(key)?;
-                }
-            }
+        if event::poll(Duration::from_millis(250))?
+            && let Event::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press
+        {
+            app.handle_key(key)?;
         }
         if app.should_quit {
             break;
@@ -116,77 +115,11 @@ fn run_pending_action(
     app: &mut App,
     action: PendingAction,
 ) -> Result<()> {
-    match action {
-        PendingAction::Delete(plans) => {
-            let label = if plans.len() == 1 {
-                format!("Deleting '{}' …", plans[0].skill_name)
-            } else {
-                format!("Deleting {} skills …", plans.len())
-            };
-            app.set_busy(label);
-            terminal.draw(|f| draw(f, app))?;
-
-            let runner = SystemCommandRunner;
-            let mut msgs = Vec::new();
-            let mut errors = Vec::new();
-            for plan in &plans {
-                match execute_delete(&runner, plan, app.npx_available) {
-                    Ok(m) => msgs.extend(m),
-                    Err(err) => errors.push(format!("{}: {err}", plan.skill_name)),
-                }
-            }
-            // Inventory ids are skill directory names (== skill_name).
-            for plan in &plans {
-                app.checked.remove(&(plan.skill_name.clone(), plan.scope));
-            }
-
-            app.set_busy("Refreshing skill list …");
-            terminal.draw(|f| draw(f, app))?;
-
-            let refresh_result = app.reload_light();
-
-            let mut body = msgs.join("\n");
-            if !errors.is_empty() {
-                if !body.is_empty() {
-                    body.push_str("\n\n");
-                }
-                body.push_str(&errors.join("\n"));
-            }
-            match refresh_result {
-                Ok(()) => app.show_message(format!(
-                    "{body}\n\n(Press R to recompute activation stats)"
-                )),
-                Err(err) => app.show_message(format!("{body}\n\nrefresh failed: {err}")),
-            }
-        }
-        PendingAction::Update { backend, jobs } => {
-            let label = if jobs.len() == 1 {
-                format!("Updating '{}' via {} …", jobs[0].name, backend.as_str())
-            } else {
-                format!(
-                    "Updating {} skills via {} …",
-                    jobs.len(),
-                    backend.as_str()
-                )
-            };
-            app.set_busy(label);
-            terminal.draw(|f| draw(f, app))?;
-
-            let runner = SystemCommandRunner;
-            let msg = match execute_update(&runner, backend, &jobs) {
-                Ok(m) => m,
-                Err(err) => format!("update failed: {err}"),
-            };
-            let _ = app.reload_light();
-            app.show_message(msg);
-        }
-        PendingAction::AnalyzeActivations => {
-            app.set_busy("Analyzing activations (recent sessions) …");
-            terminal.draw(|f| draw(f, app))?;
-            app.analyze_activations()?;
-        }
-    }
-    Ok(())
+    let runner = SystemCommandRunner;
+    executor::run_pending_action(app, action, &runner, &mut |app| {
+        terminal.draw(|f| draw(f, app))?;
+        Ok(())
+    })
 }
 
 fn dirs_home() -> Option<PathBuf> {

@@ -1,6 +1,6 @@
 //! Parse agent transcripts to count skill activations.
 
-use crate::model::{Agent, SkillRecord};
+use crate::model::{Agent, SkillRecord, normalize_skill_id};
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 use std::collections::{HashMap, HashSet};
@@ -85,8 +85,8 @@ pub fn analyze_logs_with_limits(
     limits: AnalyzeLimits,
 ) -> Result<ActivationIndex> {
     let cutoff = now - Duration::days(window_days);
-    let cutoff_sys = SystemTime::UNIX_EPOCH
-        + std::time::Duration::from_secs(cutoff.timestamp().max(0) as u64);
+    let cutoff_sys =
+        SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(cutoff.timestamp().max(0) as u64);
     let mut index = ActivationIndex::default();
 
     scan_agent_files(
@@ -117,8 +117,8 @@ pub fn analyze_logs_with_limits(
 pub fn apply_stats(records: &mut [SkillRecord], index: &ActivationIndex) {
     let total_sessions: u64 = index.sessions_by_agent.values().sum();
     for rec in records.iter_mut() {
-        let key = rec.id.to_lowercase();
-        let name_key = rec.name.to_lowercase();
+        let key = normalize_skill_id(&rec.id, &rec.name);
+        let name_key = normalize_skill_id(&rec.name, &rec.name);
         let mut hits = index
             .hits_by_skill
             .get(&key)
@@ -143,11 +143,7 @@ pub fn apply_stats(records: &mut [SkillRecord], index: &ActivationIndex) {
             for agent in &rec.agents {
                 sum += index.sessions_by_agent.get(agent).copied().unwrap_or(0);
             }
-            if sum == 0 {
-                total_sessions
-            } else {
-                sum
-            }
+            if sum == 0 { total_sessions } else { sum }
         };
         rec.stats.hits = hits;
         rec.stats.sessions_total = sessions_total;
@@ -278,13 +274,7 @@ fn process_file(
     let lower = String::from_utf8_lossy(&buf).to_lowercase();
     // Cheap reject: no skill-ish path markers.
     if !lower.contains("skills/") && !lower.contains("skill.md") {
-        let when = DateTime::<Utc>::from(modified);
-        let session_id = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("unknown");
-        // Still counts as a scanned session for denominator.
-        let _ = (when, session_id);
+        // Still counts as a scanned session for the denominator.
         return Ok(true);
     }
 
@@ -369,8 +359,9 @@ mod tests {
     #[test]
     fn extracts_skill_from_path_mentions() {
         let mut index = ActivationIndex::default();
-        let text = r#"read /users/me/.claude/skills/brainstorming/skill.md and also skills/tdd/SKILL.md"#
-            .to_lowercase();
+        let text =
+            r#"read /users/me/.claude/skills/brainstorming/skill.md and also skills/tdd/SKILL.md"#
+                .to_lowercase();
         record_hits_from_text(&text, "sess1", Utc::now(), &mut index);
         assert!(index.hits_by_skill.contains_key("brainstorming"));
         assert!(index.hits_by_skill.contains_key("tdd"));
@@ -425,5 +416,32 @@ mod tests {
         .unwrap();
         assert_eq!(index.sessions_by_agent.get(&Agent::ClaudeCode), Some(&5));
         assert!(index.truncated_files >= 15);
+    }
+
+    #[test]
+    fn apply_stats_ties_index_to_records_by_shared_normalization() {
+        use crate::model::{InstallKind, InstallSource, Scope, SkillStats};
+        let mut index = ActivationIndex::default();
+        note_hit(&mut index, "find-skills", "s1", Utc::now());
+        index.sessions_by_agent.insert(Agent::Cursor, 10);
+
+        let mut records = vec![SkillRecord {
+            id: "find-skills".into(),
+            name: "Find Skills".into(),
+            description: String::new(),
+            scope: Scope::User,
+            agents: vec![Agent::Cursor],
+            locations: vec![],
+            install_kind: InstallKind::Copy,
+            source: InstallSource::Npx,
+            source_url: None,
+            version: None,
+            pinned: false,
+            stats: SkillStats::default(),
+        }];
+        apply_stats(&mut records, &index);
+        assert_eq!(records[0].stats.hits, 1);
+        assert_eq!(records[0].stats.sessions_total, 10);
+        assert_eq!(records[0].stats.activation_rate, Some(0.1));
     }
 }

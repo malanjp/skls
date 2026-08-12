@@ -11,6 +11,10 @@ pub enum Scope {
     User,
 }
 
+/// Canonical skill identity: normalized id + scope. One type shared by the
+/// inventory merge, the multi-select marks, and the stats-preserving reload.
+pub type SkillKey = (String, Scope);
+
 impl Scope {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -63,70 +67,172 @@ pub enum Agent {
     Devin,
 }
 
+/// One row of the single agent table. Order must match the `Agent` enum
+/// declaration order — `as_str` indexes into it by discriminant and the
+/// consistency test (`agent_tables_are_consistent`) guards the pairing.
+struct AgentDef {
+    agent: Agent,
+    /// Canonical host string returned by `as_str` / accepted by `parse`.
+    host: &'static str,
+    /// Extra aliases accepted by `parse` (the host itself is always accepted).
+    aliases: &'static [&'static str],
+}
+
+const AGENT_DEFS: &[AgentDef] = &[
+    AgentDef {
+        agent: Agent::Cursor,
+        host: "cursor",
+        aliases: &[],
+    },
+    AgentDef {
+        agent: Agent::ClaudeCode,
+        host: "claude-code",
+        aliases: &["claude"],
+    },
+    AgentDef {
+        agent: Agent::Codex,
+        host: "codex",
+        aliases: &[],
+    },
+    AgentDef {
+        agent: Agent::GeminiCli,
+        host: "gemini-cli",
+        aliases: &["gemini"],
+    },
+    AgentDef {
+        agent: Agent::Antigravity,
+        host: "antigravity",
+        aliases: &[],
+    },
+    AgentDef {
+        agent: Agent::AntigravityCli,
+        host: "antigravity-cli",
+        aliases: &[],
+    },
+    AgentDef {
+        agent: Agent::Antigravity2,
+        host: "antigravity2.0",
+        aliases: &["antigravity2"],
+    },
+    AgentDef {
+        agent: Agent::GitHubCopilot,
+        host: "github-copilot",
+        aliases: &["copilot"],
+    },
+    AgentDef {
+        agent: Agent::OpenCode,
+        host: "opencode",
+        aliases: &[],
+    },
+    AgentDef {
+        agent: Agent::Pi,
+        host: "pi",
+        aliases: &[],
+    },
+    AgentDef {
+        agent: Agent::Amp,
+        host: "amp",
+        aliases: &[],
+    },
+    AgentDef {
+        agent: Agent::KimiCli,
+        host: "kimi-cli",
+        aliases: &["kimi"],
+    },
+    AgentDef {
+        agent: Agent::Replit,
+        host: "replit",
+        aliases: &[],
+    },
+    AgentDef {
+        agent: Agent::QwenCode,
+        host: "qwen-code",
+        aliases: &["qwen"],
+    },
+    AgentDef {
+        agent: Agent::Augment,
+        host: "augment",
+        aliases: &[],
+    },
+    AgentDef {
+        agent: Agent::Continue,
+        host: "continue",
+        aliases: &[],
+    },
+    AgentDef {
+        agent: Agent::Droid,
+        host: "droid",
+        aliases: &["factory"],
+    },
+    AgentDef {
+        agent: Agent::Kilo,
+        host: "kilo",
+        aliases: &["kilocode"],
+    },
+    AgentDef {
+        agent: Agent::Qoder,
+        host: "qoder",
+        aliases: &[],
+    },
+    AgentDef {
+        agent: Agent::Roo,
+        host: "roo",
+        aliases: &[],
+    },
+    AgentDef {
+        agent: Agent::Trae,
+        host: "trae",
+        aliases: &[],
+    },
+    AgentDef {
+        agent: Agent::CodeBuddy,
+        host: "codebuddy",
+        aliases: &[],
+    },
+    AgentDef {
+        agent: Agent::Grok,
+        host: "grok",
+        aliases: &[],
+    },
+    AgentDef {
+        agent: Agent::Cline,
+        host: "cline",
+        aliases: &[],
+    },
+    AgentDef {
+        agent: Agent::Warp,
+        host: "warp",
+        aliases: &[],
+    },
+    AgentDef {
+        agent: Agent::Universal,
+        host: "universal",
+        aliases: &[],
+    },
+    AgentDef {
+        agent: Agent::Devin,
+        host: "devin",
+        aliases: &[],
+    },
+];
+
 impl Agent {
     pub fn as_str(self) -> &'static str {
-        match self {
-            Agent::Cursor => "cursor",
-            Agent::ClaudeCode => "claude-code",
-            Agent::Codex => "codex",
-            Agent::GeminiCli => "gemini-cli",
-            Agent::Antigravity => "antigravity",
-            Agent::AntigravityCli => "antigravity-cli",
-            Agent::Antigravity2 => "antigravity2.0",
-            Agent::GitHubCopilot => "github-copilot",
-            Agent::OpenCode => "opencode",
-            Agent::Pi => "pi",
-            Agent::Amp => "amp",
-            Agent::KimiCli => "kimi-cli",
-            Agent::Replit => "replit",
-            Agent::QwenCode => "qwen-code",
-            Agent::Augment => "augment",
-            Agent::Continue => "continue",
-            Agent::Droid => "droid",
-            Agent::Kilo => "kilo",
-            Agent::Qoder => "qoder",
-            Agent::Roo => "roo",
-            Agent::Trae => "trae",
-            Agent::CodeBuddy => "codebuddy",
-            Agent::Grok => "grok",
-            Agent::Cline => "cline",
-            Agent::Warp => "warp",
-            Agent::Universal => "universal",
-            Agent::Devin => "devin",
-        }
+        AGENT_DEFS[self as usize].host
     }
 
     /// All known agents (inventory / filter order).
     pub fn all() -> &'static [Agent] {
-        &[
-            Agent::Cursor,
-            Agent::ClaudeCode,
-            Agent::Codex,
-            Agent::GeminiCli,
-            Agent::Antigravity,
-            Agent::AntigravityCli,
-            Agent::Antigravity2,
-            Agent::GitHubCopilot,
-            Agent::OpenCode,
-            Agent::Pi,
-            Agent::Amp,
-            Agent::KimiCli,
-            Agent::Replit,
-            Agent::QwenCode,
-            Agent::Augment,
-            Agent::Continue,
-            Agent::Droid,
-            Agent::Kilo,
-            Agent::Qoder,
-            Agent::Roo,
-            Agent::Trae,
-            Agent::CodeBuddy,
-            Agent::Grok,
-            Agent::Cline,
-            Agent::Warp,
-            Agent::Universal,
-            Agent::Devin,
-        ]
+        const ALL: [Agent; AGENT_DEFS.len()] = {
+            let mut out = [Agent::Cursor; AGENT_DEFS.len()];
+            let mut i = 0;
+            while i < AGENT_DEFS.len() {
+                out[i] = AGENT_DEFS[i].agent;
+                i += 1;
+            }
+            out
+        };
+        &ALL
     }
 
     /// Default targets for add flow (common trio).
@@ -135,36 +241,10 @@ impl Agent {
     }
 
     pub fn parse(s: &str) -> Option<Self> {
-        match s {
-            "cursor" => Some(Agent::Cursor),
-            "claude-code" | "claude" => Some(Agent::ClaudeCode),
-            "codex" => Some(Agent::Codex),
-            "gemini-cli" | "gemini" => Some(Agent::GeminiCli),
-            "antigravity" => Some(Agent::Antigravity),
-            "antigravity-cli" => Some(Agent::AntigravityCli),
-            "antigravity2.0" | "antigravity2" => Some(Agent::Antigravity2),
-            "github-copilot" | "copilot" => Some(Agent::GitHubCopilot),
-            "opencode" => Some(Agent::OpenCode),
-            "pi" => Some(Agent::Pi),
-            "amp" => Some(Agent::Amp),
-            "kimi-cli" | "kimi" => Some(Agent::KimiCli),
-            "replit" => Some(Agent::Replit),
-            "qwen-code" | "qwen" => Some(Agent::QwenCode),
-            "augment" => Some(Agent::Augment),
-            "continue" => Some(Agent::Continue),
-            "droid" | "factory" => Some(Agent::Droid),
-            "kilo" | "kilocode" => Some(Agent::Kilo),
-            "qoder" => Some(Agent::Qoder),
-            "roo" => Some(Agent::Roo),
-            "trae" => Some(Agent::Trae),
-            "codebuddy" => Some(Agent::CodeBuddy),
-            "grok" => Some(Agent::Grok),
-            "cline" => Some(Agent::Cline),
-            "warp" => Some(Agent::Warp),
-            "universal" => Some(Agent::Universal),
-            "devin" => Some(Agent::Devin),
-            _ => None,
-        }
+        let idx = AGENT_DEFS
+            .iter()
+            .position(|d| d.host == s || d.aliases.contains(&s))?;
+        Some(Agent::all()[idx])
     }
 }
 
@@ -258,8 +338,9 @@ pub struct SkillRecord {
 }
 
 impl SkillRecord {
-    pub fn primary_path(&self) -> Option<&PathBuf> {
-        self.locations.first().map(|l| &l.path)
+    /// The canonical inventory identity for this skill.
+    pub fn key(&self) -> SkillKey {
+        (self.id.clone(), self.scope)
     }
 
     pub fn agents_label(&self) -> String {
@@ -272,6 +353,27 @@ impl SkillRecord {
                 .collect::<Vec<_>>()
                 .join(",")
         }
+    }
+}
+
+/// Shared id normalization used everywhere a skill name/id is compared:
+/// inventory merge keys, gh matching, and log-stat tying. Keeps one rule so
+/// lookups can never disagree about whether two strings name the same skill.
+pub fn normalize_skill_id(id: &str, name: &str) -> String {
+    let base = if id.is_empty() { name } else { id };
+    base.trim_start_matches('.').to_lowercase()
+}
+
+/// Comma-joined agent ids for modal summaries (empty => `(none)`).
+pub fn agents_label(agents: &[Agent]) -> String {
+    if agents.is_empty() {
+        "(none)".into()
+    } else {
+        agents
+            .iter()
+            .map(|a| a.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
     }
 }
 
@@ -308,31 +410,17 @@ pub struct SkillFilters {
     pub scope: Option<Scope>,
     pub agents: Vec<Agent>,
     pub query: String,
-    pub source: Option<InstallSource>,
-    pub install_kind: Option<InstallKind>,
 }
 
 impl SkillFilters {
     pub fn matches(&self, skill: &SkillRecord) -> bool {
-        if let Some(scope) = self.scope {
-            if skill.scope != scope {
-                return false;
-            }
-        }
-        if !self.agents.is_empty()
-            && !skill.agents.iter().any(|a| self.agents.contains(a))
+        if let Some(scope) = self.scope
+            && skill.scope != scope
         {
             return false;
         }
-        if let Some(source) = self.source {
-            if skill.source != source {
-                return false;
-            }
-        }
-        if let Some(kind) = self.install_kind {
-            if skill.install_kind != kind {
-                return false;
-            }
+        if !self.agents.is_empty() && !skill.agents.iter().any(|a| self.agents.contains(a)) {
+            return false;
         }
         if !self.query.is_empty() {
             let q = self.query.to_lowercase();
@@ -372,5 +460,101 @@ mod tests {
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), Agent::all().len());
+    }
+
+    #[test]
+    fn agent_tables_are_consistent() {
+        let all = Agent::all();
+        for (i, agent) in all.iter().enumerate() {
+            assert_eq!(
+                AGENT_DEFS[i].agent, *agent,
+                "AGENT_DEFS order must match enum order at index {i}"
+            );
+            assert_eq!(agent.as_str(), AGENT_DEFS[i].host);
+            assert_eq!(
+                Agent::parse(agent.as_str()),
+                Some(*agent),
+                "host round-trips"
+            );
+        }
+        for def in AGENT_DEFS {
+            for alias in def.aliases {
+                assert_eq!(Agent::parse(alias), Some(def.agent), "alias {alias}");
+            }
+        }
+    }
+
+    #[test]
+    fn normalize_skill_id_strips_dots_and_lowercases() {
+        assert_eq!(normalize_skill_id(".FooBar", ".FooBar"), "foobar");
+        assert_eq!(normalize_skill_id("", "fallback"), "fallback");
+    }
+
+    #[test]
+    fn skill_key_uses_id_and_scope() {
+        let rec = SkillRecord {
+            id: "tdd".into(),
+            name: "TDD".into(),
+            description: String::new(),
+            scope: Scope::Project,
+            agents: vec![],
+            locations: vec![],
+            install_kind: InstallKind::Copy,
+            source: InstallSource::Manual,
+            source_url: None,
+            version: None,
+            pinned: false,
+            stats: SkillStats::default(),
+        };
+        assert_eq!(rec.key(), (String::from("tdd"), Scope::Project));
+    }
+
+    #[test]
+    fn filters_match_scope_agents_and_query() {
+        let rec = SkillRecord {
+            id: "find-skills".into(),
+            name: "find-skills".into(),
+            description: "Discover agent skills".into(),
+            scope: Scope::User,
+            agents: vec![Agent::Cursor, Agent::ClaudeCode],
+            locations: vec![],
+            install_kind: InstallKind::Copy,
+            source: InstallSource::Npx,
+            source_url: None,
+            version: None,
+            pinned: false,
+            stats: SkillStats::default(),
+        };
+        let all = SkillFilters::default();
+        assert!(all.matches(&rec));
+
+        let project = SkillFilters {
+            scope: Some(Scope::Project),
+            ..Default::default()
+        };
+        assert!(!project.matches(&rec));
+
+        let agent = SkillFilters {
+            agents: vec![Agent::Codex],
+            ..Default::default()
+        };
+        assert!(!agent.matches(&rec));
+
+        let agent2 = SkillFilters {
+            agents: vec![Agent::Cursor, Agent::Codex],
+            ..Default::default()
+        };
+        assert!(agent2.matches(&rec));
+
+        let query = SkillFilters {
+            query: "DISCOVER".into(),
+            ..Default::default()
+        };
+        assert!(query.matches(&rec));
+        let miss = SkillFilters {
+            query: "zzz".into(),
+            ..Default::default()
+        };
+        assert!(!miss.matches(&rec));
     }
 }

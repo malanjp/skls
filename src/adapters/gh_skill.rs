@@ -2,7 +2,7 @@
 
 use crate::adapters::command::{CommandOutput, CommandRunner};
 use crate::model::{Agent, Scope};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -110,14 +110,7 @@ impl<'a, R: CommandRunner> GhSkillCli<'a, R> {
         let out = self.runner.run(
             "gh",
             &[
-                "skill",
-                "install",
-                repo,
-                skill,
-                "--agent",
-                agent_s,
-                "--scope",
-                scope_s,
+                "skill", "install", repo, skill, "--agent", agent_s, "--scope", scope_s,
             ],
         )?;
         if !out.success() {
@@ -161,8 +154,7 @@ fn parse_list_json(stdout: &str) -> Result<Vec<GhSkillListItem>> {
     if trimmed.is_empty() {
         return Ok(Vec::new());
     }
-    serde_json::from_str(trimmed)
-        .with_context(|| format!("invalid gh skill list json: {trimmed}"))
+    serde_json::from_str(trimmed).with_context(|| format!("invalid gh skill list json: {trimmed}"))
 }
 
 #[cfg(test)]

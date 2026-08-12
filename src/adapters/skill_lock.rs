@@ -27,11 +27,11 @@ pub fn skill_lock_paths(project_root: &Path, home: &Path) -> Vec<(crate::model::
     use crate::model::Scope;
     vec![
         (Scope::User, home.join(".agents/.skill-lock.json")),
-        (Scope::Project, project_root.join(".agents/.skill-lock.json")),
         (
             Scope::Project,
-            project_root.join("skills-lock.json"),
+            project_root.join(".agents/.skill-lock.json"),
         ),
+        (Scope::Project, project_root.join("skills-lock.json")),
     ]
 }
 
@@ -40,10 +40,7 @@ pub fn load_skill_lock(path: &Path) -> Option<SkillLock> {
     serde_json::from_str(&raw).ok()
 }
 
-pub fn load_locks(
-    project_root: &Path,
-    home: &Path,
-) -> Vec<(crate::model::Scope, SkillLock)> {
+pub fn load_locks(project_root: &Path, home: &Path) -> Vec<(crate::model::Scope, SkillLock)> {
     let mut out = Vec::new();
     for (scope, path) in skill_lock_paths(project_root, home) {
         if let Some(lock) = load_skill_lock(&path) {

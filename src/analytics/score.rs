@@ -45,12 +45,32 @@ pub fn compute_delete_score(skill: &SkillRecord, now: chrono::DateTime<Utc>) -> 
         score += 10.0;
     }
 
+    // Pinned skills are never suggested for deletion.
+    if skill.pinned {
+        score = 0.0;
+    }
+
     score
 }
 
 pub fn apply_scores(records: &mut [SkillRecord], now: chrono::DateTime<Utc>) {
     for rec in records.iter_mut() {
         rec.stats.delete_score = compute_delete_score(rec, now);
+    }
+}
+
+/// Delete-score thresholds behind the detail-pane advice label.
+pub const DELETE_SCORE_REVIEW: f64 = 35.0;
+pub const DELETE_SCORE_CONSIDER: f64 = 60.0;
+
+/// Recommendation bucket for a delete score (drives the detail-pane advice).
+pub fn delete_advice(score: f64) -> &'static str {
+    if score >= DELETE_SCORE_CONSIDER {
+        "consider delete"
+    } else if score >= DELETE_SCORE_REVIEW {
+        "review"
+    } else {
+        "keep"
     }
 }
 
@@ -97,5 +117,22 @@ mod tests {
         let s_used = compute_delete_score(&used, now);
         assert!(s_unused > s_used);
         assert!(s_unused >= 60.0);
+    }
+
+    #[test]
+    fn pinned_skills_score_zero() {
+        let now = Utc::now();
+        let mut pinned = base();
+        pinned.pinned = true;
+        assert_eq!(compute_delete_score(&pinned, now), 0.0);
+    }
+
+    #[test]
+    fn delete_advice_buckets_thresholds() {
+        assert_eq!(delete_advice(60.0), "consider delete");
+        assert_eq!(delete_advice(59.9), "review");
+        assert_eq!(delete_advice(35.0), "review");
+        assert_eq!(delete_advice(34.9), "keep");
+        assert_eq!(delete_advice(0.0), "keep");
     }
 }

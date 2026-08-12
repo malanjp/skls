@@ -4,7 +4,7 @@ use crate::adapters::command::CommandRunner;
 use crate::adapters::gh_skill::GhSkillCli;
 use crate::adapters::npx_skills::NpxSkillsCli;
 use crate::model::{Agent, InstallSource, Scope, SkillRecord};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -45,10 +45,7 @@ pub fn plan_delete(skill: &SkillRecord, agents: &[Agent]) -> DeletePlan {
     paths.dedup();
     let mut shared_warning = None;
     for loc in &selected {
-        let candidates = [
-            Some(loc.path.as_path()),
-            loc.resolved.as_deref(),
-        ];
+        let candidates = [Some(loc.path.as_path()), loc.resolved.as_deref()];
         for path in candidates.into_iter().flatten() {
             let s = path.to_string_lossy();
             if s.contains("/.agents/skills/") {
@@ -103,10 +100,8 @@ pub fn execute_delete(
                     Ok(out) => {
                         let detail = out.stdout.trim();
                         if detail.is_empty() {
-                            messages.push(format!(
-                                "npx skills remove {} @{}",
-                                plan.skill_name, agent
-                            ));
+                            messages
+                                .push(format!("npx skills remove {} @{}", plan.skill_name, agent));
                         } else {
                             messages.push(format!(
                                 "npx skills remove {} @{}: {detail}",
@@ -129,8 +124,7 @@ pub fn execute_delete(
 }
 
 pub fn remove_skill_path(path: &Path) -> Result<()> {
-    let meta = fs::symlink_metadata(path)
-        .with_context(|| format!("stat {}", path.display()))?;
+    let meta = fs::symlink_metadata(path).with_context(|| format!("stat {}", path.display()))?;
     if meta.file_type().is_symlink() {
         fs::remove_file(path).with_context(|| format!("unlink {}", path.display()))?;
     } else if meta.is_dir() {
@@ -227,8 +221,7 @@ fn execute_update_gh(runner: &impl CommandRunner, jobs: &[UpdateJob]) -> Result<
     let mut msgs = Vec::new();
     for job in jobs {
         let mut attempts: Vec<String> = Vec::new();
-        let mut try_dirs: Vec<Option<&Path>> =
-            job.dirs.iter().map(|d| Some(d.as_path())).collect();
+        let mut try_dirs: Vec<Option<&Path>> = job.dirs.iter().map(|d| Some(d.as_path())).collect();
         if try_dirs.is_empty() {
             try_dirs.push(None);
         }
@@ -308,7 +301,10 @@ pub fn suggested_update_backend_for(skills: &[SkillRecord]) -> Option<AddBackend
 }
 
 fn skill_has_gh_metadata(skill: &SkillRecord) -> bool {
-    skill.locations.iter().any(|l| skill_path_has_github_metadata(&l.path))
+    skill
+        .locations
+        .iter()
+        .any(|l| crate::adapters::fs::skill_path_has_github_metadata(&l.path))
 }
 
 /// Ordered skill-root dirs for `gh skill update --dir`, preferring copies
@@ -328,7 +324,7 @@ pub fn prefer_update_dirs(skill: &SkillRecord, agents: &[Agent]) -> Vec<PathBuf>
         } else {
             1
         };
-        if skill_path_has_github_metadata(path) {
+        if crate::adapters::fs::skill_path_has_github_metadata(path) {
             n += 10;
         }
         n
@@ -350,25 +346,6 @@ pub fn prefer_update_dirs(skill: &SkillRecord, agents: &[Agent]) -> Vec<PathBuf>
         }
     }
     out
-}
-
-fn skill_path_has_github_metadata(skill_dir: &Path) -> bool {
-    let md = skill_dir.join("SKILL.md");
-    let Ok(content) = fs::read_to_string(md) else {
-        return false;
-    };
-    let lower = content.to_lowercase();
-    lower.contains("github-repo:")
-        || lower.contains("sourceurl:")
-        || lower.contains("source_url:")
-}
-
-pub fn require_cli(name: &str) -> Result<()> {
-    if crate::adapters::command::which_ok(name) {
-        Ok(())
-    } else {
-        Err(anyhow!("{name} not found on PATH"))
-    }
 }
 
 #[cfg(test)]
@@ -518,10 +495,7 @@ mod tests {
             pinned: false,
             stats: SkillStats::default(),
         };
-        assert_eq!(
-            suggested_update_backend(&skill),
-            Some(AddBackend::GhSkill)
-        );
+        assert_eq!(suggested_update_backend(&skill), Some(AddBackend::GhSkill));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Command runner abstraction for CLI adapters (testable).
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::process::Command;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,9 +88,7 @@ impl FakeCommandRunner {
     pub fn with_responses(responses: Vec<CommandOutput>) -> Self {
         Self {
             calls: std::sync::Mutex::new(Vec::new()),
-            responses: std::sync::Mutex::new(
-                responses.into_iter().map(Ok).collect(),
-            ),
+            responses: std::sync::Mutex::new(responses.into_iter().map(Ok).collect()),
         }
     }
 
