@@ -448,7 +448,7 @@ Keys
   C-b / PgUp  page up (list)
   gg / Home   first
   L / C-l / End  last
-  t         cycle sidebar (agent → gh → npx → plugins → mcp)
+  t         cycle sidebar (manual → gh → npx → plugins → mcp)
   Space     toggle select
   *         select/clear all visible
   x         clear selection
@@ -456,7 +456,7 @@ Keys
   f         filter (scope · agents)
   s         cycle sort key (skills view)
   S         toggle sort direction (asc / desc)
-  a         add (agent: gh/npx · gh/npx: that backend · plugins: catalog CLI)
+  a         add (manual: gh/npx · gh/npx: that backend · plugins: catalog CLI)
   d         delete (selection or current row)
   u         update
   r         light rescan
@@ -465,7 +465,7 @@ Keys
   q         quit
 
 Sidebar
-  agent     manual + plugin-bundled skills
+  manual    SRC manual + plugin-bundled skills
   gh        gh skill installs
   npx       npx skills installs
   plugins   agent plugin packages

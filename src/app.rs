@@ -74,7 +74,7 @@ pub struct App {
     pub plugins: Vec<PluginRecord>,
     pub mcp_servers: Vec<McpServerRecord>,
     pub list_view: ListView,
-    /// Left-sidebar category (agent / gh / npx / plugins / mcp).
+    /// Left-sidebar category (manual / gh / npx / plugins / mcp).
     pub nav: NavItem,
     /// Which pane receives j/k: sidebar vs the item list.
     pub focus: FocusPane,
@@ -159,7 +159,7 @@ impl App {
             plugins: Vec::new(),
             mcp_servers: Vec::new(),
             list_view: ListView::Skills,
-            nav: NavItem::Agent,
+            nav: NavItem::Manual,
             focus: FocusPane::List,
             filtered_indices: Vec::new(),
             selected: 0,
@@ -750,7 +750,7 @@ impl App {
 
     pub fn nav_count(&self, item: NavItem) -> usize {
         match item {
-            NavItem::Agent | NavItem::Gh | NavItem::Npx => self
+            NavItem::Manual | NavItem::Gh | NavItem::Npx => self
                 .skills
                 .iter()
                 .filter(|s| item.matches_skill(s) && self.filters.matches(s))
@@ -1018,7 +1018,7 @@ impl App {
         if matches!(key.code, KeyCode::Char('g')) && !key.modifiers.contains(KeyModifiers::SHIFT) {
             if self.pending_g {
                 self.pending_g = false;
-                self.apply_nav(NavItem::Agent);
+                self.apply_nav(NavItem::Manual);
             } else {
                 self.pending_g = true;
             }
@@ -1034,7 +1034,7 @@ impl App {
                 self.focus = FocusPane::List;
             }
             KeyCode::Char('h') | KeyCode::Left => {}
-            KeyCode::Home => self.apply_nav(NavItem::Agent),
+            KeyCode::Home => self.apply_nav(NavItem::Manual),
             KeyCode::End | KeyCode::Char('L') => self.apply_nav(NavItem::Mcp),
             KeyCode::Char('/') => {
                 self.mode = Mode::Search;
@@ -2463,7 +2463,7 @@ mod tests {
             locations: vec![],
             scope: Scope::User,
         }];
-        assert_eq!(app.nav, NavItem::Agent);
+        assert_eq!(app.nav, NavItem::Manual);
         app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE))
             .unwrap();
         assert_eq!(app.nav, NavItem::Gh);
@@ -2483,7 +2483,7 @@ mod tests {
         assert_eq!(app.selected_mcp().unwrap().name, "docs");
         app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE))
             .unwrap();
-        assert_eq!(app.nav, NavItem::Agent);
+        assert_eq!(app.nav, NavItem::Manual);
         assert_eq!(app.list_view, ListView::Skills);
     }
 
@@ -2516,7 +2516,7 @@ mod tests {
     fn nav_hides_other_sources() {
         let mut app = sample_app();
         app.skills[1].source = InstallSource::Npx;
-        app.apply_nav(NavItem::Agent);
+        app.apply_nav(NavItem::Manual);
         let names: Vec<&str> = app
             .filtered_indices
             .iter()
@@ -2530,7 +2530,7 @@ mod tests {
             .map(|&i| app.skills[i].name.as_str())
             .collect();
         assert_eq!(names, vec!["beta"]);
-        assert_eq!(app.nav_count(NavItem::Agent), 1);
+        assert_eq!(app.nav_count(NavItem::Manual), 1);
         assert_eq!(app.nav_count(NavItem::Npx), 1);
         assert_eq!(app.nav_count(NavItem::Gh), 0);
     }

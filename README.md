@@ -16,7 +16,7 @@ See which skills are installed, where they apply, and whether they are used — 
 ## Features
 
 - **Inventory**: 27 agent hosts (Cursor loads `~/.agents/skills` too). Scans skills bundled in Claude Code / Cursor / Codex / agents plugins. Filter by project / user scope and agent; multi-select for bulk actions
-- **Sidebar**: left nav splits the list into **agent** (manual + plugin-bundled skills) / **gh** / **npx** / **plugins** / **mcp**. `h`/`l` (or Tab) move focus; `j`/`k` on the sidebar changes category; `t` still cycles
+- **Sidebar**: left nav splits the list into **manual** (plus plugin-bundled skills) / **gh** / **npx** / **plugins** / **mcp**. `h`/`l` (or Tab) move focus; `j`/`k` on the sidebar changes category; `t` still cycles
 - **Metrics**: Compute activation rate from conversation logs and show a delete-recommendation score (`delete_score`)
 - **Add**: Skills via `gh skill` / `npx skills`. Plugins via `claude plugin` / `copilot plugin` / `codex plugin` (Cursor has no catalog CLI)
 - **Delete**: Remove inventory paths (confirmation required). npx-sourced skills also run `npx skills remove`. Plugin delete uses the host catalog CLI first. Warns on shared-store and plugin paths
@@ -66,7 +66,7 @@ On startup the skill list appears first, then activation is sampled. With defaul
 
 ## Screen
 
-The left sidebar splits the inventory: **agent** (manual + plugin-bundled skills) · **gh** · **npx** · **plugins** · **mcp**. List in the center, detail on the right. `h`/`l` (or Tab) move focus between sidebar and list. `[ ]` / `[x]` mark multi-select.
+The left sidebar splits the inventory: **manual** (plus plugin-bundled skills) · **gh** · **npx** · **plugins** · **mcp**. List in the center, detail on the right. `h`/`l` (or Tab) move focus between sidebar and list. `[ ]` / `[x]` mark multi-select.
 
 **Skills** columns: `NAME` · `SCOPE` · `SRC` (`plugin` / `gh skill` / `npx skills` / `manual`) · `AUTHOR` · `RATE` · `SCORE`. Default sort is `delete_score` descending (higher = stronger delete candidate). `S` toggles asc/desc; cycling with `s` resets to that key's default direction. Author comes from the SKILL.md frontmatter, the plugin manifest, or the GitHub owner of the source repo.
 
@@ -86,7 +86,7 @@ The left sidebar splits the inventory: **agent** (manual + plugin-bundled skills
 | `Ctrl+B` / `PgUp` | Page up (no wrap; list) |
 | `gg` / `Home` | Jump to first row (list) / first nav item (sidebar) |
 | `L` / `Ctrl+L` / `End` | Jump to last row (list) / last nav item (sidebar) |
-| `t` | Cycle sidebar (agent → gh → npx → plugins → mcp) |
+| `t` | Cycle sidebar (manual → gh → npx → plugins → mcp) |
 | `Space` | Toggle row selection |
 | `*` | Select / clear all visible |
 | `x` | Clear selection |
@@ -94,7 +94,7 @@ The left sidebar splits the inventory: **agent** (manual + plugin-bundled skills
 | `f` | Filter panel |
 | `s` | Cycle sort key (`name` → `rate` → `delete_score` → `last_hit` → `author` → `source`); resets direction to that key's default |
 | `S` | Toggle sort direction (asc / desc) |
-| `a` | Add flow (agent: pick `gh`/`npx`; gh/npx nav: that backend; plugins: catalog CLI) |
+| `a` | Add flow (manual: pick `gh`/`npx`; gh/npx nav: that backend; plugins: catalog CLI) |
 | `d` | Delete confirm (selection if any, else current row) |
 | `u` | Update |
 | `r` | Light rescan (list only) |
@@ -114,7 +114,7 @@ The left sidebar splits the inventory: **agent** (manual + plugin-bundled skills
 
 ### Add (`a`)
 
-On the **agent** nav, step through dialogs. `Esc` goes back one step; `q` cancels.
+On the **manual** nav, step through dialogs. `Esc` goes back one step; `q` cancels.
 
 1. Backend: `1`/`g` = `gh skill`, `2`/`n` = `npx skills`
 2. Source (gh: search query; npx: `owner/repo` or `owner/repo@skill`)

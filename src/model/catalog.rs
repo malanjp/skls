@@ -28,10 +28,10 @@ impl ListView {
 }
 
 /// Left-sidebar categories. Skills are partitioned by install source so each
-/// row lives in one place: agent (manual + plugin-bundled), gh, or npx.
+/// row lives in one place: manual (plus plugin-bundled), gh, or npx.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NavItem {
-    Agent,
+    Manual,
     Gh,
     Npx,
     Plugins,
@@ -40,7 +40,7 @@ pub enum NavItem {
 
 impl NavItem {
     pub const ALL: [NavItem; 5] = [
-        NavItem::Agent,
+        NavItem::Manual,
         NavItem::Gh,
         NavItem::Npx,
         NavItem::Plugins,
@@ -61,7 +61,7 @@ impl NavItem {
 
     pub fn as_str(self) -> &'static str {
         match self {
-            NavItem::Agent => "agent",
+            NavItem::Manual => "manual",
             NavItem::Gh => "gh",
             NavItem::Npx => "npx",
             NavItem::Plugins => "plugins",
@@ -71,7 +71,7 @@ impl NavItem {
 
     pub fn label(self) -> &'static str {
         match self {
-            NavItem::Agent => "agent",
+            NavItem::Manual => "manual",
             NavItem::Gh => "gh",
             NavItem::Npx => "npx",
             NavItem::Plugins => "plugins",
@@ -81,7 +81,7 @@ impl NavItem {
 
     pub fn list_view(self) -> ListView {
         match self {
-            NavItem::Agent | NavItem::Gh | NavItem::Npx => ListView::Skills,
+            NavItem::Manual | NavItem::Gh | NavItem::Npx => ListView::Skills,
             NavItem::Plugins => ListView::Plugins,
             NavItem::Mcp => ListView::Mcp,
         }
@@ -90,7 +90,9 @@ impl NavItem {
     /// Whether a skill belongs in this sidebar category.
     pub fn matches_skill(self, skill: &SkillRecord) -> bool {
         match self {
-            NavItem::Agent => matches!(skill.source, InstallSource::Manual | InstallSource::Plugin),
+            NavItem::Manual => {
+                matches!(skill.source, InstallSource::Manual | InstallSource::Plugin)
+            }
             NavItem::Gh => skill.source == InstallSource::Gh,
             NavItem::Npx => skill.source == InstallSource::Npx,
             NavItem::Plugins | NavItem::Mcp => false,
@@ -264,12 +266,12 @@ mod tests {
 
     #[test]
     fn nav_item_cycles_and_maps_list_view() {
-        assert_eq!(NavItem::Agent.next(), NavItem::Gh);
+        assert_eq!(NavItem::Manual.next(), NavItem::Gh);
         assert_eq!(NavItem::Gh.next(), NavItem::Npx);
         assert_eq!(NavItem::Npx.next(), NavItem::Plugins);
         assert_eq!(NavItem::Plugins.next(), NavItem::Mcp);
-        assert_eq!(NavItem::Mcp.next(), NavItem::Agent);
-        assert_eq!(NavItem::Agent.list_view(), ListView::Skills);
+        assert_eq!(NavItem::Mcp.next(), NavItem::Manual);
+        assert_eq!(NavItem::Manual.list_view(), ListView::Skills);
         assert_eq!(NavItem::Gh.list_view(), ListView::Skills);
         assert_eq!(NavItem::Plugins.list_view(), ListView::Plugins);
         assert_eq!(NavItem::Mcp.list_view(), ListView::Mcp);
@@ -293,13 +295,13 @@ mod tests {
             pinned: false,
             stats: crate::model::SkillStats::default(),
         };
-        assert!(NavItem::Agent.matches_skill(&skill));
+        assert!(NavItem::Manual.matches_skill(&skill));
         assert!(!NavItem::Gh.matches_skill(&skill));
         skill.source = InstallSource::Plugin;
-        assert!(NavItem::Agent.matches_skill(&skill));
+        assert!(NavItem::Manual.matches_skill(&skill));
         skill.source = InstallSource::Gh;
         assert!(NavItem::Gh.matches_skill(&skill));
-        assert!(!NavItem::Agent.matches_skill(&skill));
+        assert!(!NavItem::Manual.matches_skill(&skill));
         skill.source = InstallSource::Npx;
         assert!(NavItem::Npx.matches_skill(&skill));
         assert!(!NavItem::Plugins.matches_skill(&skill));
