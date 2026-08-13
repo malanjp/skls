@@ -2,6 +2,7 @@
 
 use serde::Deserialize;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -58,8 +59,17 @@ fn absolutize(path: &Path) -> PathBuf {
 }
 
 pub fn load_config(path: &Path, home: &Path) -> LoadedConfig {
-    let Ok(raw) = fs::read_to_string(path) else {
-        return LoadedConfig::default();
+    let raw = match fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            return LoadedConfig::default();
+        }
+        Err(err) => {
+            return LoadedConfig {
+                projects: Vec::new(),
+                warnings: vec![format!("{}: {err}", path.display())],
+            };
+        }
     };
     let parsed: RawConfig = match toml::from_str(&raw) {
         Ok(v) => v,
@@ -147,6 +157,19 @@ mod tests {
         let loaded = load_config(&tmp.path().join("nope.toml"), &home);
         assert!(loaded.projects.is_empty());
         assert!(loaded.warnings.is_empty());
+    }
+
+    #[test]
+    fn load_config_unreadable_path_warns_and_returns_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        let cfg = tmp.path().join("config.toml");
+        fs::create_dir_all(&cfg).unwrap();
+        let loaded = load_config(&cfg, &home);
+        assert!(loaded.projects.is_empty());
+        assert_eq!(loaded.warnings.len(), 1);
+        assert!(loaded.warnings[0].contains("config.toml"));
     }
 
     #[test]
