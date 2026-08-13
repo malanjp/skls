@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-13
+
 ### ハイライト
 
 - **左サイドバー** — manual / gh / npx / plugins / mcp で一覧を分割。`h`/`l`（Tab）でフォーカス、サイドバー上の `j`/`k` で切替。`t` でも循環。スキルは出所で排他分割（manual はプラグイン同梱も含む、gh / npx はそれぞれのインストーラ）
@@ -107,7 +109,9 @@
 - ログ照合はヒューリスティックであり、厳密なスキル実行回数ではない
 - `gh` / `npx` がなくても一覧と指標は動く。CLI 依存の操作だけ無効になる
 
-[Unreleased]: https://github.com/malanjp/skls/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/malanjp/skls/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/malanjp/skls/releases/tag/v0.5.0
+[0.4.0]: https://github.com/malanjp/skls/releases/tag/v0.4.0
 [0.3.2]: https://github.com/malanjp/skls/releases/tag/v0.3.2
 [0.3.1]: https://github.com/malanjp/skls/releases/tag/v0.3.1
 [0.3.0]: https://github.com/malanjp/skls/releases/tag/v0.3.0
