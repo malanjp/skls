@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **MCP list** — `t` cycles skills → plugins → MCP. Bundled servers from plugin `mcp.json` / `.mcp.json` (Agent Plugins 1.0 and the looser `command`/`url` form)
 - **Plugin catalog ops** — add / update / uninstall from `claude plugin`, `copilot plugin`, and `codex plugin`. Cursor has no catalog CLI (install from the host marketplace). Listing still works without these binaries
+- **Paging and sort direction** — `Ctrl+F` / `Ctrl+B` (and PageDown / PageUp) move by a page; `gg` / `Home` jump to first, `L` / `Ctrl+L` / `End` to last; `S` toggles asc/desc
 
 ### Added
 
@@ -20,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plugin add / update / delete via host catalog CLIs (`claude plugin install|update|uninstall`, `copilot plugin install|update|uninstall`, `codex plugin add|remove`). Codex update re-runs `plugin add`. If every uninstall CLI fails, inventory paths are removed as a fallback
 - `--dump-json` now prints `{ skills, plugins, mcp_servers }` instead of a bare skills array
 - Skill list `SRC` uses `plugin` / `gh skill` / `npx skills` / `manual`. A plugin copy no longer hides `npx skills` / `gh skill` when a lockfile, `~/.agents/skills`, or `gh skill list` says otherwise. Plugin-only paths stay `plugin`
+- List paging: `Ctrl+F` / `PageDown` forward, `Ctrl+B` / `PageUp` back (clamped; `j`/`k` still wrap). Step is the visible list height minus one row. `gg` / `Home` jumps to the first row, `L` / `Ctrl+L` / `End` to the last
+- `S` toggles sort direction. `s` still cycles the key and resets to that key's default (`delete_score` / `rate` / `last_hit` → desc; `name` / `author` / `source` → asc). Header shows `↑` / `↓`
 
 ## [0.4.0] - 2026-08-13
 

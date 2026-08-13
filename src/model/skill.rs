@@ -415,6 +415,35 @@ pub enum SortKey {
     Source,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortDir {
+    Asc,
+    Desc,
+}
+
+impl SortDir {
+    pub fn toggle(self) -> Self {
+        match self {
+            SortDir::Asc => SortDir::Desc,
+            SortDir::Desc => SortDir::Asc,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SortDir::Asc => "asc",
+            SortDir::Desc => "desc",
+        }
+    }
+
+    pub fn marker(self) -> &'static str {
+        match self {
+            SortDir::Asc => "↑",
+            SortDir::Desc => "↓",
+        }
+    }
+}
+
 impl SortKey {
     pub fn next(self) -> Self {
         match self {
@@ -424,6 +453,13 @@ impl SortKey {
             SortKey::LastHit => SortKey::Author,
             SortKey::Author => SortKey::Source,
             SortKey::Source => SortKey::Name,
+        }
+    }
+
+    pub fn default_dir(self) -> SortDir {
+        match self {
+            SortKey::Name | SortKey::Author | SortKey::Source => SortDir::Asc,
+            SortKey::Rate | SortKey::Score | SortKey::LastHit => SortDir::Desc,
         }
     }
 

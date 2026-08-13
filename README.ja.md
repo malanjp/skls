@@ -68,7 +68,7 @@ skls --dump-json                     # TUI なしで JSON 出力（{ skills, plu
 
 `t` で一覧を切替: **skills → plugins → MCP**。左が一覧、右が詳細。行頭の `[ ]` / `[x]` は複数選択。
 
-**スキル**の列は `NAME` · `SCOPE` · `SRC`（`plugin` / `gh skill` / `npx skills` / `manual`）· `AUTHOR` · `RATE` · `SCORE`。デフォルトソートは `delete_score`（高いほど削除候補）。作者は SKILL.md の frontmatter・プラグインマニフェスト・ソースリポジトリの GitHub owner から取得する。
+**スキル**の列は `NAME` · `SCOPE` · `SRC`（`plugin` / `gh skill` / `npx skills` / `manual`）· `AUTHOR` · `RATE` · `SCORE`。デフォルトソートは `delete_score` の降順（高いほど削除候補）。`S` で昇順/降順を切替。`s` でキーを変えるとそのキーの既定方向に戻る。作者は SKILL.md の frontmatter・プラグインマニフェスト・ソースリポジトリの GitHub owner から取得する。
 
 **プラグイン**の列は `NAME` · `SCOPE` · `MARKET` · `SK`（同梱スキル数）· `MCP`。
 
@@ -81,13 +81,18 @@ skls --dump-json                     # TUI なしで JSON 出力（{ skills, plu
 | キー | 動作 |
 |------|------|
 | `j` / `k` | 移動 |
+| `Ctrl+F` / `PgDn` | 次ページ（端で止まる） |
+| `Ctrl+B` / `PgUp` | 前ページ（端で止まる） |
+| `gg` / `Home` | 先頭行へ |
+| `L` / `Ctrl+L` / `End` | 末尾行へ |
 | `t` | ビュー切替（skills → plugins → mcp） |
 | `Space` | 行の選択トグル |
 | `*` | 表示中を全選択 / 全解除 |
 | `x` | 選択クリア |
 | `/` | 名前・説明の検索 |
 | `f` | フィルタパネル |
-| `s` | ソート切替（`name` → `rate` → `delete_score` → `last_hit` → `author` → `source`） |
+| `s` | ソートキー切替（`name` → `rate` → `delete_score` → `last_hit` → `author` → `source`）。そのキーの既定方向に戻す |
+| `S` | ソート方向の切替（昇順 / 降順） |
 | `a` | 追加フロー（スキル: `gh`/`npx`、プラグイン: カタログ CLI） |
 | `d` | 削除確認（選択があれば一括、なければカーソル行） |
 | `u` | 更新 |
