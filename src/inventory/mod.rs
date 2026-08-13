@@ -71,12 +71,13 @@ pub fn merge_discovered(discovered: Vec<DiscoveredSkill>) -> Vec<SkillRecord> {
     let mut map: HashMap<SkillKey, SkillRecord> = HashMap::new();
 
     for d in discovered {
-        let key = (normalize_skill_id(&d.id, &d.name), d.location.scope);
+        let key = (normalize_skill_id(&d.id, &d.name), d.location.scope, None);
         let entry = map.entry(key.clone()).or_insert_with(|| SkillRecord {
             id: key.0.clone(),
             name: d.name.clone(),
             description: d.description.clone(),
             scope: d.location.scope,
+            project: None,
             agents: Vec::new(),
             locations: Vec::new(),
             install_kind: d.location.kind,

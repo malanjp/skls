@@ -124,7 +124,7 @@ pub struct App {
     pub delete_plans_cache: Vec<DeletePlan>,
     /// Cursor into the available-agents list for j/k + Space toggles.
     pub agent_focus: usize,
-    /// Multi-select marks keyed by (id, scope).
+    /// Multi-select marks keyed by (id, scope, project).
     pub checked: HashSet<SkillKey>,
     pub checked_plugins: HashSet<(String, Scope)>,
     pub checked_mcp: HashSet<(String, Scope, String)>,
@@ -1970,6 +1970,7 @@ mod tests {
                 name: "alpha".into(),
                 description: "A".into(),
                 scope: Scope::User,
+                project: None,
                 agents: vec![Agent::Cursor],
                 locations: vec![],
                 install_kind: InstallKind::Copy,
@@ -1991,6 +1992,7 @@ mod tests {
                 name: "beta".into(),
                 description: "B".into(),
                 scope: Scope::Project,
+                project: None,
                 agents: vec![Agent::Codex],
                 locations: vec![],
                 install_kind: InstallKind::Symlink,
@@ -2142,6 +2144,7 @@ mod tests {
                 name: format!("s{i:02}"),
                 description: String::new(),
                 scope: Scope::User,
+                project: None,
                 agents: vec![Agent::Cursor],
                 locations: vec![],
                 install_kind: InstallKind::Copy,

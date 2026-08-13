@@ -95,7 +95,7 @@ fn run_delete(
     }
     // Inventory ids are skill directory names (== skill_name).
     for plan in &plans {
-        app.checked.remove(&(plan.skill_name.clone(), plan.scope));
+        app.checked.remove(&(plan.skill_name.clone(), plan.scope, None));
     }
 
     app.set_busy("Refreshing skill list …");
@@ -286,6 +286,7 @@ mod tests {
             name: name.into(),
             description: String::new(),
             scope: Scope::User,
+            project: None,
             agents: vec![Agent::Cursor],
             locations: vec![SkillLocation {
                 agent: Agent::Cursor,

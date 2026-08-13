@@ -285,6 +285,7 @@ mod tests {
             name: "x".into(),
             description: String::new(),
             scope: Scope::User,
+            project: None,
             agents: vec![],
             locations: vec![],
             install_kind: crate::model::InstallKind::Copy,

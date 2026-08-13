@@ -549,6 +549,7 @@ mod tests {
             name: "x".into(),
             description: String::new(),
             scope: Scope::User,
+            project: None,
             agents: vec![Agent::Cursor],
             locations: vec![SkillLocation {
                 agent: Agent::Cursor,
@@ -671,6 +672,7 @@ mod tests {
             name: "tdd".into(),
             description: String::new(),
             scope: Scope::User,
+            project: None,
             agents: vec![Agent::Cursor],
             locations: vec![SkillLocation {
                 agent: Agent::Cursor,
@@ -708,6 +710,7 @@ mod tests {
             name: "tdd".into(),
             description: String::new(),
             scope: Scope::User,
+            project: None,
             agents: vec![Agent::ClaudeCode, Agent::Cursor],
             locations: vec![
                 SkillLocation {
@@ -751,6 +754,7 @@ mod tests {
             name: "tdd".into(),
             description: String::new(),
             scope: Scope::User,
+            project: None,
             agents: vec![Agent::ClaudeCode, Agent::Cursor],
             locations: vec![
                 SkillLocation {
@@ -786,6 +790,7 @@ mod tests {
             name: "x".into(),
             description: String::new(),
             scope: Scope::User,
+            project: None,
             agents: vec![Agent::ClaudeCode],
             locations: vec![SkillLocation {
                 agent: Agent::ClaudeCode,
