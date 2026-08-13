@@ -3,11 +3,12 @@
 use crate::adapters::CommandRunner;
 use crate::adapters::fs::{DiscoveredSkill, scan_skills};
 use crate::adapters::gh_skill::{GhSkillCli, GhSkillListItem};
-use crate::adapters::plugin::scan_plugin_skills;
+use crate::adapters::mcp::DiscoveredMcp;
+use crate::adapters::plugin::{DiscoveredPlugin, scan_plugin_inventory};
 use crate::adapters::skill_lock::{SkillLock, load_locks};
 use crate::model::{
-    Agent, InstallKind, InstallSource, Scope, SkillKey, SkillLocation, SkillRecord, SkillStats,
-    github_owner, normalize_skill_id,
+    Agent, InstallKind, InstallSource, McpServerRecord, PluginRecord, Scope, SkillKey,
+    SkillLocation, SkillRecord, SkillStats, github_owner, normalize_skill_id,
 };
 use anyhow::Result;
 use std::collections::HashMap;
@@ -18,33 +19,48 @@ pub struct InventoryOptions {
     pub use_gh: bool,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct Inventory {
+    pub skills: Vec<SkillRecord>,
+    pub plugins: Vec<PluginRecord>,
+    pub mcp: Vec<McpServerRecord>,
+    pub warnings: Vec<String>,
+}
+
 pub fn build_inventory(
     project_root: &Path,
     home: &Path,
     runner: &impl CommandRunner,
     opts: &InventoryOptions,
-) -> Result<(Vec<SkillRecord>, Vec<String>)> {
+) -> Result<Inventory> {
     let mut warnings = Vec::new();
     let (discovered, scan_warnings) = scan_skills(project_root, home)?;
     warnings.extend(scan_warnings);
-    let (plugin_skills, plugin_warnings) = scan_plugin_skills(project_root, home)?;
-    warnings.extend(plugin_warnings);
-    let mut records = merge_discovered(discovered.into_iter().chain(plugin_skills).collect());
+    let plugin_scan = scan_plugin_inventory(project_root, home)?;
+    warnings.extend(plugin_scan.warnings);
+    let mut skills = merge_discovered(discovered.into_iter().chain(plugin_scan.skills).collect());
+    let plugins = merge_plugins(plugin_scan.plugins);
+    let mcp = merge_mcp(plugin_scan.mcp);
 
     // Fast path: npx skills lockfile (no process spawn).
     for (scope, lock) in load_locks(project_root, home) {
-        enrich_with_skill_lock(&mut records, &lock, scope);
+        enrich_with_skill_lock(&mut skills, &lock, scope);
     }
 
     if opts.use_gh {
         let cli = GhSkillCli { runner };
         match cli.list(None, None) {
-            Ok(items) => enrich_with_gh(&mut records, &items),
+            Ok(items) => enrich_with_gh(&mut skills, &items),
             Err(err) => warnings.push(format!("gh skill list unavailable: {err}")),
         }
     }
 
-    Ok((records, warnings))
+    Ok(Inventory {
+        skills,
+        plugins,
+        mcp,
+        warnings,
+    })
 }
 
 pub fn merge_discovered(discovered: Vec<DiscoveredSkill>) -> Vec<SkillRecord> {
@@ -104,6 +120,128 @@ pub fn merge_discovered(discovered: Vec<DiscoveredSkill>) -> Vec<SkillRecord> {
     records.sort_by(|a, b| {
         a.name
             .cmp(&b.name)
+            .then(a.scope.as_str().cmp(b.scope.as_str()))
+    });
+    records
+}
+
+fn merge_plugins(discovered: Vec<DiscoveredPlugin>) -> Vec<PluginRecord> {
+    let mut map: HashMap<(String, Scope), PluginRecord> = HashMap::new();
+    for d in discovered {
+        let id = normalize_skill_id(&d.name, &d.name);
+        let key = (id.clone(), d.location.scope);
+        let entry = map.entry(key.clone()).or_insert_with(|| PluginRecord {
+            id: key.0.clone(),
+            name: d.name.clone(),
+            description: d.description.clone(),
+            version: d.version.clone(),
+            author: d.author.clone(),
+            marketplace: d.marketplace.clone(),
+            spec: d.spec.clone(),
+            agents: Vec::new(),
+            locations: Vec::new(),
+            skill_names: d.skill_names.clone(),
+            mcp_names: d.mcp_names.clone(),
+            source_url: d.source_url.clone(),
+            scope: d.location.scope,
+        });
+        if !entry.agents.contains(&d.location.agent) {
+            entry.agents.push(d.location.agent);
+        }
+        if !entry
+            .locations
+            .iter()
+            .any(|l| l.path == d.location.path && l.agent == d.location.agent)
+        {
+            entry.locations.push(d.location.clone());
+        }
+        if entry.source_url.is_none() {
+            entry.source_url = d.source_url.clone();
+        }
+        if entry.author.is_none() {
+            entry.author = d
+                .author
+                .clone()
+                .or_else(|| d.source_url.as_deref().and_then(github_owner));
+        }
+        if entry.version.is_none() {
+            entry.version = d.version.clone();
+        }
+        if entry.description.is_empty() && !d.description.is_empty() {
+            entry.description = d.description.clone();
+        }
+        if entry.marketplace.is_none() {
+            entry.marketplace = d.marketplace.clone();
+        }
+        if !entry.spec.contains('@') && d.spec.contains('@') {
+            entry.spec = d.spec.clone();
+        }
+        for name in d.skill_names {
+            if !entry.skill_names.contains(&name) {
+                entry.skill_names.push(name);
+            }
+        }
+        for name in d.mcp_names {
+            if !entry.mcp_names.contains(&name) {
+                entry.mcp_names.push(name);
+            }
+        }
+    }
+    let mut records: Vec<PluginRecord> = map.into_values().collect();
+    for r in &mut records {
+        r.agents.sort_by_key(|a| a.as_str());
+        r.skill_names.sort();
+        r.mcp_names.sort();
+        r.locations
+            .sort_by(|a, b| a.agent.as_str().cmp(b.agent.as_str()));
+    }
+    records.sort_by(|a, b| {
+        a.name
+            .cmp(&b.name)
+            .then(a.scope.as_str().cmp(b.scope.as_str()))
+    });
+    records
+}
+
+fn merge_mcp(discovered: Vec<DiscoveredMcp>) -> Vec<McpServerRecord> {
+    let mut map: HashMap<(String, Scope, String), McpServerRecord> = HashMap::new();
+    for d in discovered {
+        let plugin = d.plugin.clone().unwrap_or_default();
+        let id = normalize_skill_id(&d.name, &d.name);
+        let key = (id.clone(), d.location.scope, plugin.clone());
+        let entry = map.entry(key.clone()).or_insert_with(|| McpServerRecord {
+            id: key.0.clone(),
+            name: d.name.clone(),
+            transport: d.transport,
+            command: d.command.clone(),
+            args: d.args.clone(),
+            url: d.url.clone(),
+            plugin: d.plugin.clone(),
+            agents: Vec::new(),
+            locations: Vec::new(),
+            scope: d.location.scope,
+        });
+        if !entry.agents.contains(&d.location.agent) {
+            entry.agents.push(d.location.agent);
+        }
+        if !entry
+            .locations
+            .iter()
+            .any(|l| l.path == d.location.path && l.agent == d.location.agent)
+        {
+            entry.locations.push(d.location.clone());
+        }
+    }
+    let mut records: Vec<McpServerRecord> = map.into_values().collect();
+    for r in &mut records {
+        r.agents.sort_by_key(|a| a.as_str());
+        r.locations
+            .sort_by(|a, b| a.agent.as_str().cmp(b.agent.as_str()));
+    }
+    records.sort_by(|a, b| {
+        a.name
+            .cmp(&b.name)
+            .then(a.plugin.cmp(&b.plugin))
             .then(a.scope.as_str().cmp(b.scope.as_str()))
     });
     records
@@ -389,8 +527,9 @@ mod tests {
         .unwrap();
 
         let runner = crate::adapters::command::FakeCommandRunner::default();
-        let (records, _warnings) =
+        let inventory =
             build_inventory(&project, &home, &runner, &InventoryOptions::default()).unwrap();
+        let records = inventory.skills;
 
         let tdd = records.iter().find(|r| r.name == "tdd").unwrap();
         assert_eq!(tdd.locations.len(), 2);
@@ -403,6 +542,31 @@ mod tests {
             |l| l.agent == Agent::ClaudeCode && l.path.to_string_lossy().contains("/plugins/")
         ));
         assert_eq!(tdd.source, InstallSource::Plugin);
+    }
+
+    #[test]
+    fn build_inventory_includes_plugins_and_mcp() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("proj");
+        let home = tmp.path().join("home");
+        let plugin = home.join(".cursor/plugins/cache/cursor-public/context7/abc123");
+        std::fs::create_dir_all(plugin.join("skills/context7")).unwrap();
+        std::fs::write(
+            plugin.join("skills/context7/SKILL.md"),
+            "---\nname: context7\ndescription: docs\n---\n",
+        )
+        .unwrap();
+        std::fs::write(
+            plugin.join("mcp.json"),
+            r#"{"mcpServers":{"docs":{"type":"stdio","command":"npx"}}}"#,
+        )
+        .unwrap();
+
+        let runner = crate::adapters::command::FakeCommandRunner::default();
+        let inventory =
+            build_inventory(&project, &home, &runner, &InventoryOptions::default()).unwrap();
+        assert!(inventory.plugins.iter().any(|p| p.name == "context7"));
+        assert!(inventory.mcp.iter().any(|m| m.name == "docs"));
     }
 
     #[test]

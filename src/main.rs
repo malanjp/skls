@@ -66,7 +66,7 @@ fn main() -> Result<()> {
     if cli.dump_json {
         // JSON dump needs stats in one shot.
         app.reload().context("inventory load")?;
-        println!("{}", serde_json::to_string_pretty(&dump_records(&app))?);
+        println!("{}", serde_json::to_string_pretty(&app.dump_json_value())?);
         return Ok(());
     }
 
@@ -124,24 +124,4 @@ fn run_pending_action(
 
 fn dirs_home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
-}
-
-fn dump_records(app: &App) -> Vec<serde_json::Value> {
-    app.skills
-        .iter()
-        .map(|s| {
-            serde_json::json!({
-                "id": s.id,
-                "name": s.name,
-                "scope": s.scope.as_str(),
-                "agents": s.agents.iter().map(|a| a.as_str()).collect::<Vec<_>>(),
-                "source": s.source.as_str(),
-                "author": s.author,
-                "activation_rate": s.stats.activation_rate,
-                "delete_score": s.stats.delete_score,
-                "hits": s.stats.hits,
-                "sessions_total": s.stats.sessions_total,
-            })
-        })
-        .collect()
 }

@@ -11,7 +11,7 @@ skls（*skills list*）向けの作業メモ。コーディングエージェン
 
 ## プロダクト概要
 
-TUI でエージェントスキルを横断管理する。一覧・発動率 / `delete_score`・追加（`gh skill` / `npx skills`）・削除・更新。
+TUI でエージェントスキルを横断管理する。一覧（スキル / プラグイン / MCP）・発動率 / `delete_score`・追加（`gh skill` / `npx skills` / プラグインカタログ）・削除・更新。
 
 - crate 名: `skls`
 - リポジトリ: https://github.com/malanjp/skls
@@ -23,17 +23,21 @@ TUI でエージェントスキルを横断管理する。一覧・発動率 / `
 src/
   main.rs          CLI・イベントループ・pending action
   lib.rs           モジュール公開
-  app.rs           TUI 状態機械・キーバインド
+  app.rs           TUI 状態機械・キーバインド（`t` で skills/plugins/mcp）
   model/skill.rs   Agent / Scope / SkillRecord / SkillFilters
+  model/catalog.rs ListView / PluginRecord / McpServerRecord / PluginBackend
   inventory/       FS 発見 + gh / skill-lock のマージ
   adapters/
     fs.rs          skill_roots・SKILL.md スキャン
     gh_skill.rs    gh skill CLI
     npx_skills.rs  npx skills CLI
+    plugin.rs      プラグインストア走査（skills + mcp.json + パッケージ）
+    plugin_cli.rs  claude / copilot / codex plugin CLI
+    mcp.rs         mcp.json / .mcp.json パーサ
     skill_lock.rs  ~/.agents/.skill-lock.json
     command.rs     CommandRunner / FakeCommandRunner
   analytics/       ログ発動率・delete_score
-  ops.rs           add / delete / update オーケストレーション
+  ops.rs           add / delete / update オーケストレーション（スキル + プラグイン）
   ui/render.rs     ratatui 描画
 ```
 
@@ -52,6 +56,11 @@ src/
 - 追加の初期選択は `Agent::primary()`（cursor / claude-code / codex）。`*` で全ホスト。
 - 削除: インベントリのパスを先に消す。`source == npx` かつ `npx` 利用可なら、その後必ず `npx skills remove`（early return しない）。
 - 更新: エージェント選択 → backend（gh / npx）。推定 backend は provenance / lock から。
+- ビュー切替: `t` で skills → plugins → mcp。スキル一覧のキーバインドは壊さない。
+- プラグイン追加の初期選択は `plugin_cli_agents()`（claude-code / copilot / codex）。Cursor はカタログ CLI なし（marketplace から入れて、とメッセージ）。
+- プラグイン削除: カタログ CLI が成功したらパスは消さない。全部失敗したときだけ `remove_skill_path`。
+- MCP の追加・更新はプラグインビューへ誘導。削除は親プラグインのアンインストール確認。
+- `gh` / `npx` / `claude` / `copilot` / `codex` を起動時の一覧構築で必須にしない。
 
 ### テスト
 
@@ -72,7 +81,7 @@ cargo test --lib
 
 ## やってはいけないこと
 
-- `gh` / `npx` を起動時の一覧構築で必須にしない（無くても一覧・指標は動く）。
+- `gh` / `npx` / `claude` / `copilot` / `codex` を起動時の一覧構築で必須にしない（無くても一覧・指標は動く）。
 - 削除確認なしの破壊的操作。
 - エージェント選択にホスト固定の数字キーを増やすこと。
 - README / CHANGELOG の片言語だけの更新。

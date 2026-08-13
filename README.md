@@ -16,10 +16,11 @@ See which skills are installed, where they apply, and whether they are used — 
 ## Features
 
 - **Inventory**: 27 agent hosts (Cursor loads `~/.agents/skills` too). Scans skills bundled in Claude Code / Cursor / Codex / agents plugins. Filter by project / user scope and agent; multi-select for bulk actions
+- **Views**: `t` cycles **skills → plugins → MCP**. Plugin packages and bundled MCP servers (`mcp.json`) show in the same TUI
 - **Metrics**: Compute activation rate from conversation logs and show a delete-recommendation score (`delete_score`)
-- **Add**: Install with `gh skill` or `npx skills` (chosen each time). Defaults to cursor / claude-code / codex; `*` selects every host
-- **Delete**: Remove inventory paths (confirmation required). npx-sourced skills also run `npx skills remove`. Warns on shared-store and plugin paths
-- **Update**: Choose `gh skill` / `npx skills`. If provenance can be inferred, Enter accepts the suggestion
+- **Add**: Skills via `gh skill` / `npx skills`. Plugins via `claude plugin` / `copilot plugin` / `codex plugin` (Cursor has no catalog CLI)
+- **Delete**: Remove inventory paths (confirmation required). npx-sourced skills also run `npx skills remove`. Plugin delete uses the host catalog CLI first. Warns on shared-store and plugin paths
+- **Update**: Skills via `gh skill` / `npx skills`. Plugins via the same catalog CLIs (Codex re-runs `plugin add`)
 
 ## Dependencies
 
@@ -27,8 +28,9 @@ See which skills are installed, where they apply, and whether they are used — 
 |----------|----------|
 | Rust 1.85+ (edition 2024) | [`gh`](https://cli.github.com/) (`gh skill`) |
 | | Node.js / `npx` ([`npx skills`](https://skills.sh/)) |
+| | `claude` / `copilot` / `codex` (plugin catalog add / update / delete) |
 
-Listing and activation metrics work without `gh` / `npx`. Only operations that need a missing CLI are disabled.
+Listing and activation metrics work without `gh` / `npx` / plugin CLIs. Only operations that need a missing CLI are disabled.
 
 ## Install / run
 
@@ -57,16 +59,20 @@ skls --window-days 30                # activation window (days)
 skls --max-sessions 200              # sessions read per agent (default 80)
 skls --max-bytes 1048576             # max bytes per session file (default 256KiB)
 skls --full-scan                     # no session / byte caps (slow on large log trees)
-skls --dump-json                     # print inventory as JSON (no TUI)
+skls --dump-json                     # print inventory JSON: { skills, plugins, mcp_servers }
 ```
 
 On startup the skill list appears first, then activation is sampled. With defaults, the list usually shows within about 1–2 seconds.
 
 ## Screen
 
-List on the left, detail on the right. `[ ]` / `[x]` mark multi-select. Default sort is `delete_score` (higher = stronger delete candidate).
+`t` cycles the list: **skills → plugins → MCP**. List on the left, detail on the right. `[ ]` / `[x]` mark multi-select.
 
-List columns: `NAME` · `SCOPE` · `SRC` (source: `gh` / `npx` / `plugin` / `manual`) · `AUTHOR` · `RATE` · `SCORE`. Author comes from the SKILL.md frontmatter, the plugin manifest, or the GitHub owner of the source repo.
+**Skills** columns: `NAME` · `SCOPE` · `SRC` (source: `gh` / `npx` / `plugin` / `manual`) · `AUTHOR` · `RATE` · `SCORE`. Default sort is `delete_score` (higher = stronger delete candidate). Author comes from the SKILL.md frontmatter, the plugin manifest, or the GitHub owner of the source repo.
+
+**Plugins** columns: `NAME` · `SCOPE` · `MARKET` · `SK` (bundled skills) · `MCP`.
+
+**MCP** columns: `NAME` · `TRANS` (`stdio` / `http` / `sse`) · `PLUGIN` · `AGENTS`. Servers are read from plugin `mcp.json` / `.mcp.json` (Agent Plugins 1.0, plus a looser `command`/`url` form).
 
 `sample:` in the title is the activation analysis cap; `sampled (-N older)` in the status is how many older sessions were skipped.
 
@@ -75,15 +81,16 @@ List columns: `NAME` · `SCOPE` · `SRC` (source: `gh` / `npx` / `plugin` / `man
 | Key | Action |
 |-----|--------|
 | `j` / `k` | Move |
+| `t` | Cycle view (skills → plugins → mcp) |
 | `Space` | Toggle row selection |
 | `*` | Select / clear all visible |
 | `x` | Clear selection |
 | `/` | Search name / description |
 | `f` | Filter panel |
 | `s` | Cycle sort (`name` → `rate` → `delete_score` → `last_hit` → `author` → `source`) |
-| `a` | Add flow |
+| `a` | Add flow (skills: `gh`/`npx`; plugins: catalog CLI) |
 | `d` | Delete confirm (selection if any, else current row) |
-| `u` | Update (pick backend; Enter uses suggestion when available) |
+| `u` | Update |
 | `r` | Light rescan (list only) |
 | `R` | Recompute activation stats |
 | `?` | Help |
@@ -101,12 +108,16 @@ List columns: `NAME` · `SCOPE` · `SRC` (source: `gh` / `npx` / `plugin` / `man
 
 ### Add (`a`)
 
-Step through dialogs. `Esc` goes back one step; `q` cancels.
+On the **skills** view, step through dialogs. `Esc` goes back one step; `q` cancels.
 
 1. Backend: `1`/`g` = `gh skill`, `2`/`n` = `npx skills`
 2. Source (gh: search query; npx: `owner/repo` or `owner/repo@skill`)
 3. Pick result (gh only)
 4. Agents (`j`/`k` move, `Space` toggle, `*` all, `x` none; `Enter` next) → scope (`p`/`u`) to run
+
+On the **plugins** view, enter a catalog spec (`name@marketplace`), pick hosts that have a plugin CLI (`claude-code` / `copilot` / `codex`), then scope. Cursor has no catalog CLI — install from the host marketplace.
+
+On the **MCP** view, `a` / `u` point you at the plugins view (servers are bundled in plugins).
 
 ### Delete (`d`)
 
@@ -117,7 +128,20 @@ Step through dialogs. `Esc` goes back one step; `q` cancels.
 - Paths under a shared store (e.g. `~/.agents/skills`) or inside a plugin install produce a warning; duplicate paths are deduped
 - After delete, only the list is rescanned. Press `R` to recompute activation
 
+Plugin delete (plugins view, or MCP view via the parent plugin) runs the host catalog CLI first:
+
+| Host | CLI |
+|------|-----|
+| Claude Code | `claude plugin uninstall SPEC --scope user\|project` |
+| Copilot | `copilot plugin uninstall NAME` |
+| Codex | `codex plugin remove NAME` |
+| Cursor | no CLI — message only; path left in place |
+
+If every CLI call fails, inventory paths are removed as a fallback.
+
 ### Update (`u`)
+
+**Skills**
 
 1. Agents: `j`/`k` move, `Space` toggle, `*` all, `x` none; `Enter` next
 2. Backend: `1`/`g` = `gh skill`, `2`/`n` = `npx skills` (`Esc` returns to agent selection)
@@ -134,6 +158,14 @@ Suggestion priority:
 | Mixed / unknown | no suggestion (pick manually) |
 
 `gh skill update` prefers host dirs with metadata (`.cursor` / `.codex`, …) for `--dir`. `npx skills update` adds `-g` / `-p` from scope.
+
+**Plugins** pick agents then run:
+
+| Host | CLI |
+|------|-----|
+| Claude Code | `claude plugin update SPEC --scope …` |
+| Copilot | `copilot plugin update NAME` |
+| Codex | `codex plugin add SPEC` (re-install) |
 
 ## Scan roots
 
@@ -173,7 +205,9 @@ Skills bundled inside agent plugins are attributed to the host that owns the fil
 | Codex | `~/.codex/plugins/cache/*/*/*/skills/` | codex |
 | agents | `~/.agents/plugins/` (lenient walk for `skills/` dirs) | the shared-store hosts (cursor / cline / warp / universal) |
 
-Plugin skills are marked `source: plugin`. They are not updated via `gh` / `npx`, and deleting them warns that the path lives inside a plugin install.
+Plugin skills are marked `source: plugin`. They are not updated via `gh` / `npx`, and deleting a skill path inside a plugin warns that the path lives inside a plugin install.
+
+Use the **plugins** view (`t`) to add / update / uninstall the package from a catalog instead. Bundled MCP servers (`mcp.json` / `.mcp.json`) appear on the **mcp** view.
 
 ## Activation rate and delete score
 

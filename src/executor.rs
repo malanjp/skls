@@ -10,8 +10,10 @@ use crate::adapters::command::CommandRunner;
 use crate::app::{App, PendingAction};
 use crate::model::Agent;
 use crate::model::Scope;
-use crate::ops::{AddBackend, execute_add, execute_delete, execute_update};
-use crate::ops::{DeletePlan, UpdateJob};
+use crate::ops::{
+    AddBackend, DeletePlan, PluginDeletePlan, UpdateJob, execute_add, execute_delete,
+    execute_plugin_add, execute_plugin_delete, execute_plugin_update, execute_update,
+};
 use anyhow::Result;
 
 /// Run a queued operation, redrawing between busy phases via `redraw`.
@@ -42,6 +44,15 @@ pub fn run_pending_action(
             runner,
             redraw,
         ),
+        PendingAction::PluginAdd {
+            spec,
+            agents,
+            scope,
+        } => run_plugin_add(app, spec, agents, scope, runner, redraw),
+        PendingAction::PluginUpdate { plugins, agents } => {
+            run_plugin_update(app, plugins, agents, runner, redraw)
+        }
+        PendingAction::PluginDelete(plans) => run_plugin_delete(app, plans, runner, redraw),
         PendingAction::AnalyzeActivations => {
             app.set_busy("Analyzing activations (recent sessions) …");
             redraw(app)?;
@@ -173,6 +184,89 @@ fn run_add(
     Ok(())
 }
 
+fn run_plugin_add(
+    app: &mut App,
+    spec: String,
+    agents: Vec<Agent>,
+    scope: Scope,
+    runner: &impl CommandRunner,
+    redraw: &mut dyn FnMut(&mut App) -> Result<()>,
+) -> Result<()> {
+    app.set_busy(format!("Installing plugin {spec} …"));
+    redraw(app)?;
+    match execute_plugin_add(runner, &spec, &agents, scope) {
+        Ok(msg) => {
+            app.set_busy("Refreshing inventory …");
+            redraw(app)?;
+            let msg = match app.reload_light() {
+                Ok(()) => msg,
+                Err(err) => format!("{msg}\n\nrefresh failed: {err}"),
+            };
+            app.show_message(msg);
+        }
+        Err(err) => app.show_message(format!("plugin add failed: {err}")),
+    }
+    Ok(())
+}
+
+fn run_plugin_update(
+    app: &mut App,
+    plugins: Vec<crate::model::PluginRecord>,
+    agents: Vec<Agent>,
+    runner: &impl CommandRunner,
+    redraw: &mut dyn FnMut(&mut App) -> Result<()>,
+) -> Result<()> {
+    app.set_busy(format!("Updating {} plugin(s) …", plugins.len()));
+    redraw(app)?;
+    match execute_plugin_update(runner, &plugins, &agents) {
+        Ok(msg) => {
+            app.set_busy("Refreshing inventory …");
+            redraw(app)?;
+            let msg = match app.reload_light() {
+                Ok(()) => msg,
+                Err(err) => format!("{msg}\n\nrefresh failed: {err}"),
+            };
+            app.show_message(msg);
+        }
+        Err(err) => app.show_message(format!("plugin update failed: {err}")),
+    }
+    Ok(())
+}
+
+fn run_plugin_delete(
+    app: &mut App,
+    plans: Vec<PluginDeletePlan>,
+    runner: &impl CommandRunner,
+    redraw: &mut dyn FnMut(&mut App) -> Result<()>,
+) -> Result<()> {
+    app.set_busy(format!("Uninstalling {} plugin(s) …", plans.len()));
+    redraw(app)?;
+    let mut msgs = Vec::new();
+    let mut errors = Vec::new();
+    for plan in &plans {
+        match execute_plugin_delete(runner, plan) {
+            Ok(m) => msgs.extend(m),
+            Err(err) => errors.push(format!("{}: {err}", plan.name)),
+        }
+        app.checked_plugins.remove(&(plan.name.clone(), plan.scope));
+    }
+    app.set_busy("Refreshing inventory …");
+    redraw(app)?;
+    let refresh_result = app.reload_light();
+    let mut body = msgs.join("\n");
+    if !errors.is_empty() {
+        if !body.is_empty() {
+            body.push_str("\n\n");
+        }
+        body.push_str(&errors.join("\n"));
+    }
+    match refresh_result {
+        Ok(()) => app.show_message(body),
+        Err(err) => app.show_message(format!("{body}\n\nrefresh failed: {err}")),
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,5 +392,31 @@ mod tests {
         )
         .unwrap();
         assert!(app.message.contains("add failed"));
+    }
+
+    #[test]
+    fn plugin_add_runs_catalog_cli() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = App::new(tmp.path().join("proj"), tmp.path().join("home"));
+        let runner = FakeCommandRunner::with_responses(vec![CommandOutput {
+            status: 0,
+            stdout: "installed plugin".into(),
+            stderr: String::new(),
+        }]);
+        run_pending_action(
+            &mut app,
+            PendingAction::PluginAdd {
+                spec: "fmt@claude-plugins-official".into(),
+                agents: vec![Agent::ClaudeCode],
+                scope: Scope::User,
+            },
+            &runner,
+            &mut no_redraw,
+        )
+        .unwrap();
+        let calls = runner.calls();
+        assert_eq!(calls[0].0, "claude");
+        assert!(calls[0].1.contains(&"install".into()));
+        assert!(app.message.contains("installed plugin"));
     }
 }

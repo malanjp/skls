@@ -8,6 +8,17 @@
 
 ## [Unreleased]
 
+### ハイライト
+
+- **MCP 一覧** — `t` で skills → plugins → MCP を切替。プラグインの `mcp.json` / `.mcp.json` から同梱サーバーを読む（Agent Plugins 1.0、および `command` / `url` だけの緩め形式）
+- **プラグインカタログ操作** — `claude plugin` / `copilot plugin` / `codex plugin` から追加・更新・削除。Cursor にカタログ CLI は無い（ホストの marketplace から入れる）。一覧はこれらのバイナリ無しでも動く
+
+### 追加
+
+- インストール済みプラグインパッケージと同梱 MCP サーバーの一覧（`t` で切替）。プラグイン列: `NAME` / `SCOPE` / `MARKET` / `SK` / `MCP`。MCP 列: `NAME` / `TRANS` / `PLUGIN` / `AGENTS`
+- ホストのカタログ CLI によるプラグインの追加・更新・削除（`claude plugin install|update|uninstall`、`copilot plugin install|update|uninstall`、`codex plugin add|remove`）。Codex の更新は `plugin add` の再実行。uninstall の CLI がすべて失敗したときだけパスをフォールバックで消す
+- `--dump-json` の出力をスキル配列から `{ skills, plugins, mcp_servers }` に変更
+
 ## [0.4.0] - 2026-08-13
 
 ### ハイライト

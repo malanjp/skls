@@ -2,7 +2,7 @@
 
 use crate::analytics::delete_advice;
 use crate::app::{App, Mode};
-use crate::model::{Agent, agents_label};
+use crate::model::{Agent, ListView, agents_label, plugin_cli_agents};
 use crate::ops::AddBackend;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -80,7 +80,8 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         String::new()
     };
     let title = format!(
-        " skls  scope:{}  agents:{}  sort:{}  window:{}d  sample:{}{selected} ",
+        " skls  view:{}  scope:{}  agents:{}  sort:{}  window:{}d  sample:{}{selected} ",
+        app.list_view.as_str(),
         scope_label(app.filters.scope),
         agents,
         app.sort_key.as_str(),
@@ -103,6 +104,31 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
         .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
         .split(area);
 
+    let (items, list_title, detail) = match app.list_view {
+        ListView::Skills => skill_list_content(app),
+        ListView::Plugins => plugin_list_content(app),
+        ListView::Mcp => mcp_list_content(app),
+    };
+
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::ALL).title(list_title))
+        .highlight_style(
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol(LIST_HIGHLIGHT)
+        .highlight_spacing(HighlightSpacing::Always);
+    frame.render_stateful_widget(list, panes[0], &mut app.list_state);
+
+    let detail_widget = Paragraph::new(detail)
+        .wrap(Wrap { trim: false })
+        .block(Block::default().borders(Borders::ALL).title(" detail "));
+    frame.render_widget(detail_widget, panes[1]);
+}
+
+fn skill_list_content(app: &App) -> (Vec<ListItem<'static>>, String, String) {
     let items: Vec<ListItem> = app
         .filtered_indices
         .iter()
@@ -121,20 +147,6 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
             ListItem::new(Line::from(line))
         })
         .collect();
-
-    let list_title = skill_list_title(app.checked_count());
-    let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(list_title))
-        .highlight_style(
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )
-        .highlight_symbol(LIST_HIGHLIGHT)
-        .highlight_spacing(HighlightSpacing::Always);
-    frame.render_stateful_widget(list, panes[0], &mut app.list_state);
-
     let detail = match app.selected_skill() {
         Some(s) => {
             let paths = s
@@ -199,11 +211,139 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
         }
         None => "No skill selected".into(),
     };
+    (items, skill_list_title(app.checked_count()), detail)
+}
 
-    let detail_widget = Paragraph::new(detail)
-        .wrap(Wrap { trim: false })
-        .block(Block::default().borders(Borders::ALL).title(" detail "));
-    frame.render_widget(detail_widget, panes[1]);
+fn plugin_list_content(app: &App) -> (Vec<ListItem<'static>>, String, String) {
+    let items: Vec<ListItem> = app
+        .filtered_indices
+        .iter()
+        .map(|&i| {
+            let p = &app.plugins[i];
+            let mark = if app.is_plugin_checked(p) {
+                "[x]"
+            } else {
+                "[ ]"
+            };
+            ListItem::new(Line::from(format_plugin_list_row(
+                mark,
+                &p.name,
+                p.scope.as_str(),
+                p.marketplace.as_deref().unwrap_or("-"),
+                p.skill_names.len(),
+                p.mcp_names.len(),
+            )))
+        })
+        .collect();
+    let detail = match app.selected_plugin() {
+        Some(p) => {
+            let paths = p
+                .locations
+                .iter()
+                .map(|l| format!("  · {} ({})  {}", l.agent, l.kind, l.path.display()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let skills = if p.skill_names.is_empty() {
+                "-".into()
+            } else {
+                p.skill_names.join(", ")
+            };
+            let mcp = if p.mcp_names.is_empty() {
+                "-".into()
+            } else {
+                p.mcp_names.join(", ")
+            };
+            format!(
+                "{}\n\
+                 ────────────────\n\
+                 spec       {}\n\
+                 scope      {}\n\
+                 agents     {}\n\
+                 market     {}\n\
+                 author     {}\n\
+                 version    {}\n\
+                 url        {}\n\
+                 skills     {}\n\
+                 mcp        {}\n\
+                 selected   {}\n\
+                 \n\
+                 paths\n\
+                 {}\n\
+                 \n\
+                 {}",
+                p.name,
+                p.spec,
+                p.scope,
+                p.agents_label(),
+                p.marketplace.as_deref().unwrap_or("-"),
+                p.author.as_deref().unwrap_or("-"),
+                p.version.as_deref().unwrap_or("-"),
+                p.source_url.as_deref().unwrap_or("-"),
+                skills,
+                mcp,
+                if app.is_plugin_checked(p) { "yes" } else { "-" },
+                paths,
+                p.description
+            )
+        }
+        None => "No plugin selected".into(),
+    };
+    (items, plugin_list_title(app.checked_count()), detail)
+}
+
+fn mcp_list_content(app: &App) -> (Vec<ListItem<'static>>, String, String) {
+    let items: Vec<ListItem> = app
+        .filtered_indices
+        .iter()
+        .map(|&i| {
+            let m = &app.mcp_servers[i];
+            let mark = if app.is_mcp_checked(m) { "[x]" } else { "[ ]" };
+            ListItem::new(Line::from(format_mcp_list_row(
+                mark,
+                &m.name,
+                m.transport.as_str(),
+                m.plugin.as_deref().unwrap_or("-"),
+                &m.agents_label(),
+            )))
+        })
+        .collect();
+    let detail = match app.selected_mcp() {
+        Some(m) => {
+            let paths = m
+                .locations
+                .iter()
+                .map(|l| format!("  · {} ({})  {}", l.agent, l.kind, l.path.display()))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!(
+                "{}\n\
+                 ────────────────\n\
+                 transport  {}\n\
+                 plugin     {}\n\
+                 scope      {}\n\
+                 agents     {}\n\
+                 command    {}\n\
+                 url        {}\n\
+                 selected   {}\n\
+                 \n\
+                 paths\n\
+                 {}\n\
+                 \n\
+                 MCP configs live inside plugins. Add/update from the plugins view (t).",
+                m.name,
+                m.transport.as_str(),
+                m.plugin.as_deref().unwrap_or("-"),
+                m.scope,
+                m.agents_label(),
+                m.endpoint_label(),
+                m.url.as_deref().unwrap_or("-"),
+                if app.is_mcp_checked(m) { "yes" } else { "-" },
+                paths
+            )
+        }
+        None => "No MCP server selected".into(),
+    };
+    (items, mcp_list_title(app.checked_count()), detail)
 }
 
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
@@ -228,7 +368,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Mode::AddAgent => " j/k  Space  */x all/none  Enter=next  Esc=back ".to_string(),
         Mode::AddScope => " [p]project [u]user  Esc=back  q=cancel ".to_string(),
         Mode::List => format!(
-            " j/k  Space/* /x select  / search  f filter  s sort  a add  d del  u upd  r/R refresh  ?  q{warn} "
+            " j/k  t view  Space/* /x select  / search  f filter  s sort  a add  d del  u upd  r/R refresh  ?  q{warn} "
         ),
     };
     let p = Paragraph::new(text).block(Block::default().borders(Borders::ALL));
@@ -251,35 +391,41 @@ fn draw_help_modal(frame: &mut Frame) {
     let text = "\
 Keys
   j / k     move up/down
+  t         cycle view (skills → plugins → mcp)
   Space     toggle select
   *         select/clear all visible
   x         clear selection
   /         search name/description
   f         filter (scope · agents)
-  s         cycle sort (name → rate → score → last)
-  a         add skill
+  s         cycle sort (skills view)
+  a         add (skills: gh/npx · plugins: catalog CLI)
   d         delete (selection or current row)
-  u         update (pick gh / npx)
+  u         update
   r         light rescan
   R         recompute activation stats
   ?         this help
   q         quit
 
-Update (u)
+Plugins (t)
+  a  claude / copilot / codex plugin install  SPEC
+  u  catalog update (codex re-runs plugin add)
+  d  catalog uninstall (CLI first; path fallback)
+  Cursor has no catalog CLI — install from the host marketplace
+
+MCP (t)
+  Bundled in plugins (mcp.json). a/u go to the plugins view.
+  d uninstalls the parent plugin.
+
+Update (u) on skills
   agents (j/k · Space · */x) → [1] gh skill / [2] npx skills
   Enter uses suggested backend
 
-Add (a)
+Add skills (a)
   backend → source → (gh results) → agents (j/k · Space · */x) → scope
 
 Delete (d)
   [y] confirm   [n]/Esc cancel
   j/k · Space toggle · * all · x none
-
-CLI sampling
-  --max-sessions N   sessions/agent (default 80)
-  --max-bytes N      bytes/file (default 256KiB)
-  --full-scan        no limits
 ";
     let area = centered(frame.area(), 72, 75);
     frame.render_widget(Clear, area);
@@ -316,7 +462,7 @@ fn draw_busy_modal(frame: &mut Frame, message: &str) {
 
 fn draw_search_modal(frame: &mut Frame, app: &App) {
     let body = format!(
-        "Search skills\n\
+        "Search\n\
          ────────────────────────\n\
          Filter by name or description.\n\
          \n\
@@ -421,29 +567,49 @@ fn draw_add_backend_modal(frame: &mut Frame, app: &App) {
 
 fn draw_add_query_modal(frame: &mut Frame, app: &App) {
     let (step, total) = app.add_wizard_step();
-    let (what, examples) = match app.add_backend {
-        AddBackend::GhSkill => ("enter search keywords", "e.g.  tdd\ne.g.  cloudflare"),
-        AddBackend::NpxSkills => (
-            "enter package (source)",
-            "e.g.  vercel-labs/skills\ne.g.  mattpocock/skills@tdd\n      └ owner/repo or owner/repo@skill",
-        ),
+    let body = if app.add_plugin {
+        format!(
+            "Add a plugin\n\
+             ────────────────────────\n\
+             Step {step} / {total}  ·  catalog spec\n\
+             \n\
+             e.g.  frontend-design@claude-plugins-official\n\
+             e.g.  linear@openai-curated\n\
+                   └ name@marketplace\n\
+             \n\
+             Input\n\
+             ┌──────────────────────────────────────┐\n\
+             │ {}_│\n\
+             └──────────────────────────────────────┘\n\
+             \n\
+             Keys  Enter=next · Esc/q=cancel",
+            app.input
+        )
+    } else {
+        let (what, examples) = match app.add_backend {
+            AddBackend::GhSkill => ("enter search keywords", "e.g.  tdd\ne.g.  cloudflare"),
+            AddBackend::NpxSkills => (
+                "enter package (source)",
+                "e.g.  vercel-labs/skills\ne.g.  mattpocock/skills@tdd\n      └ owner/repo or owner/repo@skill",
+            ),
+        };
+        format!(
+            "Add a skill  ·  {}\n\
+             ────────────────────────\n\
+             Step {step} / {total}  ·  {what}\n\
+             \n\
+             {examples}\n\
+             \n\
+             Input\n\
+             ┌──────────────────────────────────────┐\n\
+             │ {}_│\n\
+             └──────────────────────────────────────┘\n\
+             \n\
+             Keys  Enter=next · Esc=back · q=cancel",
+            app.add_backend.as_str(),
+            app.input
+        )
     };
-    let body = format!(
-        "Add a skill  ·  {}\n\
-         ────────────────────────\n\
-         Step {step} / {total}  ·  {what}\n\
-         \n\
-         {examples}\n\
-         \n\
-         Input\n\
-         ┌──────────────────────────────────────┐\n\
-         │ {}_│\n\
-         └──────────────────────────────────────┘\n\
-         \n\
-         Keys  Enter=next · Esc=back · q=cancel",
-        app.add_backend.as_str(),
-        app.input
-    );
     draw_add_panel(frame, &format!("add {step}/{total}"), body);
 }
 
@@ -513,10 +679,20 @@ fn draw_add_results_modal(frame: &mut Frame, app: &mut App) {
 
 fn draw_add_agent_modal(frame: &mut Frame, app: &App) {
     let (step, total) = app.add_wizard_step();
-    // Show all known hosts; default selection is Agent::primary().
-    let toggles = format_agent_toggles(&app.add_agents, Agent::all(), app.agent_focus);
+    let available: &[Agent] = if app.add_plugin {
+        plugin_cli_agents()
+    } else {
+        Agent::all()
+    };
+    let toggles = format_agent_toggles(&app.add_agents, available, app.agent_focus);
+    let kind = if app.add_plugin { "plugin" } else { "skill" };
+    let backend = if app.add_plugin {
+        "claude / copilot / codex"
+    } else {
+        app.add_backend.as_str()
+    };
     let body = format!(
-        "Add a skill  ·  {}\n\
+        "Add a {kind}  ·  {backend}\n\
          ────────────────────────\n\
          Step {step} / {total}  ·  choose target agents\n\
          \n\
@@ -526,7 +702,6 @@ fn draw_add_agent_modal(frame: &mut Frame, app: &App) {
          {toggles}\n\
          \n\
          Keys  j/k=move · Space=toggle · *=all · x=none · Enter=next · Esc=back · q=cancel",
-        app.add_backend.as_str(),
         add_source_summary(app),
     );
     draw_add_panel(frame, &format!("add {step}/{total}"), body);
@@ -535,8 +710,14 @@ fn draw_add_agent_modal(frame: &mut Frame, app: &App) {
 fn draw_add_scope_modal(frame: &mut Frame, app: &App) {
     let (step, total) = app.add_wizard_step();
     let agents = agents_label(&app.add_agents);
+    let kind = if app.add_plugin { "plugin" } else { "skill" };
+    let backend = if app.add_plugin {
+        "claude / copilot / codex"
+    } else {
+        app.add_backend.as_str()
+    };
     let body = format!(
-        "Add a skill  ·  {}\n\
+        "Add a {kind}  ·  {backend}\n\
          ────────────────────────\n\
          Step {step} / {total}  ·  choose scope and run\n\
          \n\
@@ -548,7 +729,6 @@ fn draw_add_scope_modal(frame: &mut Frame, app: &App) {
          [u]  user      all projects for this user\n\
          \n\
          Keys  p/u=run · Esc=back · q=cancel",
-        app.add_backend.as_str(),
         add_source_summary(app),
     );
     draw_add_panel(frame, &format!("add {step}/{total}"), body);
@@ -557,19 +737,37 @@ fn draw_add_scope_modal(frame: &mut Frame, app: &App) {
 fn draw_update_agents_modal(frame: &mut Frame, app: &App) {
     let available = app.update_available_agents();
     let toggles = format_agent_toggles(&app.update_agents, &available, app.agent_focus);
-    let names: Vec<&str> = app
-        .update_skills
-        .iter()
-        .take(8)
-        .map(|s| s.name.as_str())
-        .collect();
-    let more = if app.update_skills.len() > 8 {
-        format!("\n  … and {} more", app.update_skills.len() - 8)
+    let plugin_mode = !app.update_plugins.is_empty();
+    let names: Vec<&str> = if plugin_mode {
+        app.update_plugins
+            .iter()
+            .take(8)
+            .map(|p| p.name.as_str())
+            .collect()
+    } else {
+        app.update_skills
+            .iter()
+            .take(8)
+            .map(|s| s.name.as_str())
+            .collect()
+    };
+    let total = if plugin_mode {
+        app.update_plugins.len()
+    } else {
+        app.update_skills.len()
+    };
+    let more = if total > 8 {
+        format!("\n  … and {} more", total - 8)
     } else {
         String::new()
     };
+    let heading = if plugin_mode {
+        "Update plugins"
+    } else {
+        "Update skills"
+    };
     let body = format!(
-        "Update skills\n\
+        "{heading}\n\
          ────────────────────────\n\
          Choose target agents\n\
          \n\
@@ -630,106 +828,190 @@ fn draw_update_backend_modal(frame: &mut Frame, app: &App) {
 }
 
 fn draw_delete_modal(frame: &mut Frame, app: &App) {
-    let plans = app.delete_plans();
     let available = app.delete_available_agents();
     let toggles = format_agent_toggles(&app.delete_agents, &available, app.agent_focus);
-    let body = if plans.is_empty() {
-        format!(
+    let body = if !app.delete_plugins.is_empty() {
+        plugin_delete_modal_body(app, &toggles)
+    } else {
+        skill_delete_modal_body(app, &toggles)
+    };
+    draw_panel(frame, "confirm delete", body, Color::Yellow);
+}
+
+fn plugin_delete_modal_body(app: &App, toggles: &str) -> String {
+    let plans = &app.plugin_delete_plans_cache;
+    if plans.is_empty() {
+        return format!(
+            "Nothing to uninstall.\n\
+             \n\
+             {toggles}\n\
+             \n\
+             Keys  j/k · Space · *=all · x=none · Esc=cancel"
+        );
+    }
+    let filter = agents_label(&app.delete_agents);
+    let mut lines = Vec::new();
+    lines.push("Uninstall plugins".into());
+    lines.push("────────────────────────".into());
+    if plans.len() == 1 {
+        lines.push(format!(
+            "Target  {} ({})   agents: {filter}",
+            plans[0].spec, plans[0].scope
+        ));
+    } else {
+        lines.push(format!(
+            "Target  {} plugins   agents: {filter}",
+            plans.len()
+        ));
+    }
+    lines.push(String::new());
+    lines.push("Agents".into());
+    for line in toggles.lines() {
+        lines.push(format!("  {line}"));
+    }
+    lines.push(String::new());
+    lines.push("Plugins".into());
+    for plan in plans.iter().take(12) {
+        lines.push(format!(
+            "  · {}  {} [{}]",
+            plan.spec,
+            plan.scope,
+            plan.agents
+                .iter()
+                .map(|a| a.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        ));
+    }
+    if plans.len() > 12 {
+        lines.push(format!("  … and {} more", plans.len() - 12));
+    }
+    lines.push(String::new());
+    lines.push("Runs claude/copilot/codex plugin uninstall when a CLI exists.".into());
+    lines.push("Cursor has no catalog CLI (install from the host marketplace).".into());
+    lines.push("If every CLI call fails, inventory paths are removed as fallback.".into());
+    lines.push(String::new());
+    lines.push("Paths (fallback)".into());
+    let mut path_count = 0usize;
+    for plan in plans {
+        for path in &plan.paths {
+            if path_count >= 8 {
+                break;
+            }
+            lines.push(format!("  {}", path.display()));
+            path_count += 1;
+        }
+        if path_count >= 8 {
+            break;
+        }
+    }
+    let total_paths: usize = plans.iter().map(|p| p.paths.len()).sum();
+    if total_paths > path_count {
+        lines.push(format!("  … and {} more paths", total_paths - path_count));
+    }
+    lines.push(String::new());
+    lines.push(
+        "Keys  j/k=move · Space=toggle · *=all · x=none · [y]/Enter=uninstall · [n]/Esc".into(),
+    );
+    lines.join("\n")
+}
+
+fn skill_delete_modal_body(app: &App, toggles: &str) -> String {
+    let plans = app.delete_plans();
+    if plans.is_empty() {
+        return format!(
             "Nothing to delete.\n\
              \n\
              {toggles}\n\
              \n\
              Keys  j/k · Space · *=all · x=none · Esc=cancel"
-        )
+        );
+    }
+    let filter = agents_label(&app.delete_agents);
+    let mut lines = Vec::new();
+    lines.push("Delete skills".into());
+    lines.push("────────────────────────".into());
+    if plans.len() == 1 {
+        lines.push(format!(
+            "Target  {} ({})   agents: {filter}",
+            plans[0].skill_name, plans[0].scope
+        ));
     } else {
-        let filter = agents_label(&app.delete_agents);
-        let mut lines = Vec::new();
-        lines.push("Delete skills".into());
-        lines.push("────────────────────────".into());
-        if plans.len() == 1 {
-            lines.push(format!(
-                "Target  {} ({})   agents: {filter}",
-                plans[0].skill_name, plans[0].scope
-            ));
-        } else {
-            lines.push(format!("Target  {} skills   agents: {filter}", plans.len()));
-        }
-        lines.push(String::new());
-        lines.push("Agents".into());
-        for line in toggles.lines() {
-            lines.push(format!("  {line}"));
-        }
-        lines.push(String::new());
-        lines.push("Skills".into());
-        for plan in plans.iter().take(12) {
-            lines.push(format!(
-                "  · {} ({}) [{}]",
-                plan.skill_name,
-                plan.scope,
-                plan.agents
-                    .iter()
-                    .map(|a| a.as_str())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ));
-        }
-        if plans.len() > 12 {
-            lines.push(format!("  … and {} more", plans.len() - 12));
-        }
-        lines.push(String::new());
-        lines.push("Paths".into());
-        let mut path_count = 0usize;
-        for plan in plans {
-            for path in &plan.paths {
-                if path_count >= 8 {
-                    break;
-                }
-                lines.push(format!("  {}", path.display()));
-                path_count += 1;
-            }
+        lines.push(format!("Target  {} skills   agents: {filter}", plans.len()));
+    }
+    lines.push(String::new());
+    lines.push("Agents".into());
+    for line in toggles.lines() {
+        lines.push(format!("  {line}"));
+    }
+    lines.push(String::new());
+    lines.push("Skills".into());
+    for plan in plans.iter().take(12) {
+        lines.push(format!(
+            "  · {} ({}) [{}]",
+            plan.skill_name,
+            plan.scope,
+            plan.agents
+                .iter()
+                .map(|a| a.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        ));
+    }
+    if plans.len() > 12 {
+        lines.push(format!("  … and {} more", plans.len() - 12));
+    }
+    lines.push(String::new());
+    lines.push("Paths".into());
+    let mut path_count = 0usize;
+    for plan in plans {
+        for path in &plan.paths {
             if path_count >= 8 {
                 break;
             }
+            lines.push(format!("  {}", path.display()));
+            path_count += 1;
         }
-        let total_paths: usize = plans.iter().map(|p| p.paths.len()).sum();
-        if total_paths > path_count {
-            lines.push(format!("  … and {} more paths", total_paths - path_count));
+        if path_count >= 8 {
+            break;
         }
-        let shared_warns: Vec<&str> = plans
-            .iter()
-            .filter_map(|p| p.shared_warning.as_deref())
-            .collect();
-        let plugin_warns: Vec<&str> = plans
-            .iter()
-            .filter_map(|p| p.plugin_warning.as_deref())
-            .collect();
-        if !shared_warns.is_empty() {
-            lines.push(String::new());
-            lines.push(format!("Warning  {}", shared_warns[0]));
-            if shared_warns.len() > 1 {
-                lines.push(format!(
-                    "  (+{} more shared-path warnings)",
-                    shared_warns.len() - 1
-                ));
-            }
-        }
-        if !plugin_warns.is_empty() {
-            lines.push(String::new());
-            lines.push(format!("Warning  {}", plugin_warns[0]));
-            if plugin_warns.len() > 1 {
-                lines.push(format!(
-                    "  (+{} more plugin-path warnings)",
-                    plugin_warns.len() - 1
-                ));
-            }
-        }
+    }
+    let total_paths: usize = plans.iter().map(|p| p.paths.len()).sum();
+    if total_paths > path_count {
+        lines.push(format!("  … and {} more paths", total_paths - path_count));
+    }
+    let shared_warns: Vec<&str> = plans
+        .iter()
+        .filter_map(|p| p.shared_warning.as_deref())
+        .collect();
+    let plugin_warns: Vec<&str> = plans
+        .iter()
+        .filter_map(|p| p.plugin_warning.as_deref())
+        .collect();
+    if !shared_warns.is_empty() {
         lines.push(String::new());
-        lines.push(
-            "Keys  j/k=move · Space=toggle · *=all · x=none · [y]/Enter=delete · [n]/Esc".into(),
-        );
-        lines.join("\n")
-    };
-    draw_panel(frame, "confirm delete", body, Color::Yellow);
+        lines.push(format!("Warning  {}", shared_warns[0]));
+        if shared_warns.len() > 1 {
+            lines.push(format!(
+                "  (+{} more shared-path warnings)",
+                shared_warns.len() - 1
+            ));
+        }
+    }
+    if !plugin_warns.is_empty() {
+        lines.push(String::new());
+        lines.push(format!("Warning  {}", plugin_warns[0]));
+        if plugin_warns.len() > 1 {
+            lines.push(format!(
+                "  (+{} more plugin-path warnings)",
+                plugin_warns.len() - 1
+            ));
+        }
+    }
+    lines.push(String::new());
+    lines
+        .push("Keys  j/k=move · Space=toggle · *=all · x=none · [y]/Enter=delete · [n]/Esc".into());
+    lines.join("\n")
 }
 
 fn format_agent_toggles(selected: &[Agent], available: &[Agent], focus: usize) -> String {
@@ -821,6 +1103,66 @@ fn skill_list_title(checked_count: usize) -> String {
     }
 }
 
+fn format_plugin_list_row(
+    mark: &str,
+    name: &str,
+    scope: &str,
+    marketplace: &str,
+    skills: usize,
+    mcp: usize,
+) -> String {
+    format!(
+        "{mark} {:<16} {:7} {:<16} {:>2} {:>3}",
+        truncate(name, 16),
+        scope,
+        truncate(marketplace, 16),
+        skills,
+        mcp
+    )
+}
+
+fn plugin_list_title(checked_count: usize) -> String {
+    let highlight_pad = " ".repeat(LIST_HIGHLIGHT.chars().count());
+    let cols = format!(
+        "{highlight_pad}{:<3} {:<16} {:7} {:<16} {:>2} {:>3}",
+        "", "NAME", "SCOPE", "MARKET", "SK", "MCP"
+    );
+    if checked_count > 0 {
+        format!("{cols}  ({checked_count} selected) ")
+    } else {
+        format!("{cols} ")
+    }
+}
+
+fn format_mcp_list_row(
+    mark: &str,
+    name: &str,
+    transport: &str,
+    plugin: &str,
+    agents: &str,
+) -> String {
+    format!(
+        "{mark} {:<16} {:<6} {:<16} {}",
+        truncate(name, 16),
+        truncate(transport, 6),
+        truncate(plugin, 16),
+        truncate(agents, 18)
+    )
+}
+
+fn mcp_list_title(checked_count: usize) -> String {
+    let highlight_pad = " ".repeat(LIST_HIGHLIGHT.chars().count());
+    let cols = format!(
+        "{highlight_pad}{:<3} {:<16} {:<6} {:<16} {}",
+        "", "NAME", "TRANS", "PLUGIN", "AGENTS"
+    );
+    if checked_count > 0 {
+        format!("{cols}  ({checked_count} selected) ")
+    } else {
+        format!("{cols} ")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -880,5 +1222,39 @@ mod tests {
         let with_rate = format_skill_list_row("[ ]", "a", "user", "gh", "-", Some(0.012), 10.0);
         let without = format_skill_list_row("[ ]", "a", "user", "gh", "-", None, 10.0);
         assert_eq!(with_rate.len(), without.len());
+    }
+
+    #[test]
+    fn plugin_list_headers_align_with_row_columns() {
+        let highlight_pad = " ".repeat(LIST_HIGHLIGHT.chars().count());
+        let row = format!(
+            "{highlight_pad}{}",
+            format_plugin_list_row("[ ]", "context7", "user", "cursor-public", 1, 1)
+        );
+        let expected_header = format!(
+            "{highlight_pad}{:<3} {:<16} {:7} {:<16} {:>2} {:>3} ",
+            "", "NAME", "SCOPE", "MARKET", "SK", "MCP"
+        );
+        assert_eq!(plugin_list_title(0), expected_header);
+        let name_at = highlight_pad.len() + 4;
+        assert_eq!(&row[name_at..name_at + 8], "context7");
+        assert_eq!(&expected_header[name_at..name_at + 4], "NAME");
+    }
+
+    #[test]
+    fn mcp_list_headers_align_with_row_columns() {
+        let highlight_pad = " ".repeat(LIST_HIGHLIGHT.chars().count());
+        let row = format!(
+            "{highlight_pad}{}",
+            format_mcp_list_row("[ ]", "docs", "stdio", "context7", "claude-code")
+        );
+        let expected_header = format!(
+            "{highlight_pad}{:<3} {:<16} {:<6} {:<16} {} ",
+            "", "NAME", "TRANS", "PLUGIN", "AGENTS"
+        );
+        assert_eq!(mcp_list_title(0), expected_header);
+        let name_at = highlight_pad.len() + 4;
+        assert_eq!(&row[name_at..name_at + 4], "docs");
+        assert_eq!(&expected_header[name_at..name_at + 4], "NAME");
     }
 }

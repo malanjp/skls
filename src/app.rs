@@ -6,10 +6,13 @@ use crate::analytics::{
     AnalyzeLimits, LogPaths, analyze_logs_with_limits, apply_scores, apply_stats,
 };
 use crate::inventory::{InventoryOptions, build_inventory};
-use crate::model::{Agent, InstallSource, Scope, SkillFilters, SkillKey, SkillRecord, SortKey};
+use crate::model::{
+    Agent, InstallSource, ListView, McpServerRecord, PluginRecord, Scope, SkillFilters, SkillKey,
+    SkillRecord, SortKey, plugin_cli_agents,
+};
 use crate::ops::{
-    AddBackend, DeletePlan, UpdateJob, plan_delete, prefer_update_dirs,
-    suggested_update_backend_for,
+    AddBackend, DeletePlan, PluginDeletePlan, UpdateJob, plan_delete, plan_plugin_delete,
+    plugin_add_default_agents, prefer_update_dirs, suggested_update_backend_for,
 };
 use anyhow::Result;
 use chrono::Utc;
@@ -50,6 +53,16 @@ pub enum PendingAction {
         agents: Vec<Agent>,
         scope: Scope,
     },
+    PluginAdd {
+        spec: String,
+        agents: Vec<Agent>,
+        scope: Scope,
+    },
+    PluginUpdate {
+        plugins: Vec<PluginRecord>,
+        agents: Vec<Agent>,
+    },
+    PluginDelete(Vec<PluginDeletePlan>),
     /// Compute activation stats after the inventory is already on screen.
     AnalyzeActivations,
 }
@@ -58,6 +71,9 @@ pub struct App {
     pub project_root: PathBuf,
     pub home: PathBuf,
     pub skills: Vec<SkillRecord>,
+    pub plugins: Vec<PluginRecord>,
+    pub mcp_servers: Vec<McpServerRecord>,
+    pub list_view: ListView,
     pub filtered_indices: Vec<usize>,
     pub selected: usize,
     /// Keeps the skill list scrolled so `selected` stays visible.
@@ -73,6 +89,9 @@ pub struct App {
     pub analyze_limits: AnalyzeLimits,
     pub gh_available: bool,
     pub npx_available: bool,
+    pub claude_available: bool,
+    pub copilot_available: bool,
+    pub codex_available: bool,
     pub add_backend: AddBackend,
     /// Skills waiting for update agent / backend selection.
     pub update_skills: Vec<SkillRecord>,
@@ -99,6 +118,13 @@ pub struct App {
     pub agent_focus: usize,
     /// Multi-select marks keyed by (id, scope).
     pub checked: HashSet<SkillKey>,
+    pub checked_plugins: HashSet<(String, Scope)>,
+    pub checked_mcp: HashSet<(String, Scope, String)>,
+    pub delete_plugins: Vec<PluginRecord>,
+    pub plugin_delete_plans_cache: Vec<PluginDeletePlan>,
+    pub update_plugins: Vec<PluginRecord>,
+    /// When true, the add flow installs a plugin catalog spec instead of a skill.
+    pub add_plugin: bool,
     pub message: String,
     pub busy_message: String,
     pub should_quit: bool,
@@ -114,6 +140,9 @@ impl App {
             project_root,
             home,
             skills: Vec::new(),
+            plugins: Vec::new(),
+            mcp_servers: Vec::new(),
+            list_view: ListView::Skills,
             filtered_indices: Vec::new(),
             selected: 0,
             list_state: {
@@ -132,6 +161,9 @@ impl App {
             analyze_limits: AnalyzeLimits::default(),
             gh_available,
             npx_available,
+            claude_available: crate::adapters::command::which_ok("claude"),
+            copilot_available: crate::adapters::command::which_ok("copilot"),
+            codex_available: crate::adapters::command::which_ok("codex"),
             add_backend: if gh_available {
                 AddBackend::GhSkill
             } else {
@@ -153,6 +185,12 @@ impl App {
             delete_plans_cache: Vec::new(),
             agent_focus: 0,
             checked: HashSet::new(),
+            checked_plugins: HashSet::new(),
+            checked_mcp: HashSet::new(),
+            delete_plugins: Vec::new(),
+            plugin_delete_plans_cache: Vec::new(),
+            update_plugins: Vec::new(),
+            add_plugin: false,
             message: String::new(),
             busy_message: String::new(),
             should_quit: false,
@@ -170,24 +208,46 @@ impl App {
         self.delete_skills.clear();
         self.delete_agents.clear();
         self.delete_plans_cache.clear();
+        self.delete_plugins.clear();
+        self.plugin_delete_plans_cache.clear();
         self.mode = Mode::List;
         self.status = "delete cancelled".into();
     }
 
     pub fn delete_available_agents(&self) -> Vec<Agent> {
-        union_agents(self.delete_skills.iter())
+        if !self.delete_plugins.is_empty() {
+            union_plugin_agents(self.delete_plugins.iter())
+        } else {
+            union_agents(self.delete_skills.iter())
+        }
     }
 
     pub fn update_available_agents(&self) -> Vec<Agent> {
-        union_agents(self.update_skills.iter())
+        if !self.update_plugins.is_empty() {
+            union_plugin_agents(self.update_plugins.iter())
+        } else {
+            union_agents(self.update_skills.iter())
+        }
     }
 
     pub fn is_checked(&self, skill: &SkillRecord) -> bool {
         self.checked.contains(&skill.key())
     }
 
+    pub fn is_plugin_checked(&self, plugin: &PluginRecord) -> bool {
+        self.checked_plugins.contains(&plugin.key())
+    }
+
+    pub fn is_mcp_checked(&self, mcp: &McpServerRecord) -> bool {
+        self.checked_mcp.contains(&mcp.key())
+    }
+
     pub fn checked_count(&self) -> usize {
-        self.checked.len()
+        match self.list_view {
+            ListView::Skills => self.checked.len(),
+            ListView::Plugins => self.checked_plugins.len(),
+            ListView::Mcp => self.checked_mcp.len(),
+        }
     }
 
     /// Skills targeted by delete/update: multi-select if any, else the cursor row.
@@ -208,6 +268,26 @@ impl App {
     }
 
     fn refresh_delete_plans(&mut self) {
+        if !self.delete_plugins.is_empty() {
+            self.plugin_delete_plans_cache = self
+                .delete_plugins
+                .iter()
+                .filter_map(|plugin| {
+                    let agents: Vec<Agent> = plugin
+                        .agents
+                        .iter()
+                        .copied()
+                        .filter(|a| self.delete_agents.contains(a))
+                        .collect();
+                    if agents.is_empty() {
+                        return None;
+                    }
+                    Some(plan_plugin_delete(plugin, &agents))
+                })
+                .collect();
+            self.delete_plans_cache.clear();
+            return;
+        }
         self.delete_plans_cache = self
             .delete_skills
             .iter()
@@ -229,41 +309,117 @@ impl App {
     fn prune_checked(&mut self) {
         let live: HashSet<SkillKey> = self.skills.iter().map(SkillRecord::key).collect();
         self.checked.retain(|k| live.contains(k));
+        let live_p: HashSet<(String, Scope)> = self.plugins.iter().map(PluginRecord::key).collect();
+        self.checked_plugins.retain(|k| live_p.contains(k));
+        let live_m: HashSet<(String, Scope, String)> =
+            self.mcp_servers.iter().map(McpServerRecord::key).collect();
+        self.checked_mcp.retain(|k| live_m.contains(k));
     }
 
     fn toggle_check_current(&mut self) {
-        let Some(skill) = self.selected_skill() else {
-            return;
-        };
-        let key = skill.key();
-        if !self.checked.remove(&key) {
-            self.checked.insert(key);
+        match self.list_view {
+            ListView::Skills => {
+                let Some(skill) = self.selected_skill() else {
+                    return;
+                };
+                let key = skill.key();
+                if !self.checked.remove(&key) {
+                    self.checked.insert(key);
+                }
+            }
+            ListView::Plugins => {
+                let Some(plugin) = self.selected_plugin() else {
+                    return;
+                };
+                let key = plugin.key();
+                if !self.checked_plugins.remove(&key) {
+                    self.checked_plugins.insert(key);
+                }
+            }
+            ListView::Mcp => {
+                let Some(mcp) = self.selected_mcp() else {
+                    return;
+                };
+                let key = mcp.key();
+                if !self.checked_mcp.remove(&key) {
+                    self.checked_mcp.insert(key);
+                }
+            }
         }
-        self.status = format!("{} selected", self.checked.len());
+        self.status = format!("{} selected", self.checked_count());
     }
 
     fn select_all_visible(&mut self) {
-        let keys: Vec<SkillKey> = self
-            .filtered_indices
-            .iter()
-            .filter_map(|&i| self.skills.get(i).map(SkillRecord::key))
-            .collect();
-        let all_selected = !keys.is_empty() && keys.iter().all(|k| self.checked.contains(k));
-        if all_selected {
-            for k in keys {
-                self.checked.remove(&k);
+        match self.list_view {
+            ListView::Skills => {
+                let keys: Vec<SkillKey> = self
+                    .filtered_indices
+                    .iter()
+                    .filter_map(|&i| self.skills.get(i).map(SkillRecord::key))
+                    .collect();
+                let all_selected =
+                    !keys.is_empty() && keys.iter().all(|k| self.checked.contains(k));
+                if all_selected {
+                    for k in keys {
+                        self.checked.remove(&k);
+                    }
+                    self.status = "selection cleared (visible)".into();
+                } else {
+                    for k in keys {
+                        self.checked.insert(k);
+                    }
+                    self.status = format!("{} selected", self.checked.len());
+                }
             }
-            self.status = "selection cleared (visible)".into();
-        } else {
-            for k in keys {
-                self.checked.insert(k);
+            ListView::Plugins => {
+                let keys: Vec<(String, Scope)> = self
+                    .filtered_indices
+                    .iter()
+                    .filter_map(|&i| self.plugins.get(i).map(PluginRecord::key))
+                    .collect();
+                let all_selected =
+                    !keys.is_empty() && keys.iter().all(|k| self.checked_plugins.contains(k));
+                if all_selected {
+                    for k in keys {
+                        self.checked_plugins.remove(&k);
+                    }
+                    self.status = "selection cleared (visible)".into();
+                } else {
+                    for k in keys {
+                        self.checked_plugins.insert(k);
+                    }
+                    self.status = format!("{} selected", self.checked_plugins.len());
+                }
             }
-            self.status = format!("{} selected", self.checked.len());
+            ListView::Mcp => {
+                let keys: Vec<(String, Scope, String)> = self
+                    .filtered_indices
+                    .iter()
+                    .filter_map(|&i| self.mcp_servers.get(i).map(McpServerRecord::key))
+                    .collect();
+                let all_selected =
+                    !keys.is_empty() && keys.iter().all(|k| self.checked_mcp.contains(k));
+                if all_selected {
+                    for k in keys {
+                        self.checked_mcp.remove(&k);
+                    }
+                    self.status = "selection cleared (visible)".into();
+                } else {
+                    for k in keys {
+                        self.checked_mcp.insert(k);
+                    }
+                    self.status = format!("{} selected", self.checked_mcp.len());
+                }
+            }
         }
     }
 
     fn clear_checked(&mut self) {
-        self.checked.clear();
+        match self.list_view {
+            ListView::Skills => self.checked.clear(),
+            ListView::Plugins => self.checked_plugins.clear(),
+            ListView::Mcp => self.checked_mcp.clear(),
+        }
         self.status = "selection cleared".into();
     }
 
@@ -330,9 +486,11 @@ impl App {
         let opts = InventoryOptions {
             use_gh: self.gh_available,
         };
-        let (mut skills, warnings) =
-            build_inventory(&self.project_root, &self.home, &runner, &opts)?;
-        self.warnings = warnings;
+        let inventory = build_inventory(&self.project_root, &self.home, &runner, &opts)?;
+        let mut skills = inventory.skills;
+        self.warnings = inventory.warnings;
+        self.plugins = inventory.plugins;
+        self.mcp_servers = inventory.mcp;
 
         if analyze {
             let log_paths = LogPaths::from_home(&self.home);
@@ -366,16 +524,37 @@ impl App {
         self.skills = skills;
         self.prune_checked();
         self.recompute_view();
-        let sel = if self.checked.is_empty() {
+        let sel = if self.checked.is_empty() && self.checked_plugins.is_empty() {
             String::new()
         } else {
-            format!(" | {} selected", self.checked.len())
+            format!(
+                " | {} selected",
+                self.checked.len() + self.checked_plugins.len()
+            )
         };
         self.status = format!(
-            "{} skills | gh:{} npx:{}{} | {}",
+            "{} {} | {} plugins | {} mcp | gh:{} npx:{} claude:{} copilot:{} codex:{}{} | {}",
             self.skills.len(),
+            self.list_view.as_str(),
+            self.plugins.len(),
+            self.mcp_servers.len(),
             if self.gh_available { "ok" } else { "missing" },
             if self.npx_available { "ok" } else { "missing" },
+            if self.claude_available {
+                "ok"
+            } else {
+                "missing"
+            },
+            if self.copilot_available {
+                "ok"
+            } else {
+                "missing"
+            },
+            if self.codex_available {
+                "ok"
+            } else {
+                "missing"
+            },
             sel,
             self.project_root.display()
         );
@@ -383,44 +562,124 @@ impl App {
     }
 
     pub fn recompute_view(&mut self) {
-        let mut idxs: Vec<usize> = self
-            .skills
-            .iter()
-            .enumerate()
-            .filter(|(_, s)| self.filters.matches(s))
-            .map(|(i, _)| i)
-            .collect();
+        let mut idxs: Vec<usize> = match self.list_view {
+            ListView::Skills => self
+                .skills
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| self.filters.matches(s))
+                .map(|(i, _)| i)
+                .collect(),
+            ListView::Plugins => self
+                .plugins
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| self.plugin_matches(p))
+                .map(|(i, _)| i)
+                .collect(),
+            ListView::Mcp => self
+                .mcp_servers
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| self.mcp_matches(m))
+                .map(|(i, _)| i)
+                .collect(),
+        };
 
-        idxs.sort_by(|&a, &b| {
-            let sa = &self.skills[a];
-            let sb = &self.skills[b];
-            match self.sort_key {
-                SortKey::Name => sa.name.cmp(&sb.name),
-                SortKey::Rate => {
-                    let ra = sa.stats.activation_rate.unwrap_or(-1.0);
-                    let rb = sb.stats.activation_rate.unwrap_or(-1.0);
-                    rb.partial_cmp(&ra).unwrap_or(std::cmp::Ordering::Equal)
-                }
-                SortKey::Score => sb
-                    .stats
-                    .delete_score
-                    .partial_cmp(&sa.stats.delete_score)
-                    .unwrap_or(std::cmp::Ordering::Equal),
-                SortKey::LastHit => sb.stats.last_hit_at.cmp(&sa.stats.last_hit_at),
-                SortKey::Author => {
-                    Self::opt_cmp(&sa.author, &sb.author).then_with(|| sa.name.cmp(&sb.name))
-                }
-                SortKey::Source => Self::source_rank(sa.source)
-                    .cmp(&Self::source_rank(sb.source))
-                    .then_with(|| sa.name.cmp(&sb.name)),
+        match self.list_view {
+            ListView::Skills => {
+                idxs.sort_by(|&a, &b| {
+                    let sa = &self.skills[a];
+                    let sb = &self.skills[b];
+                    match self.sort_key {
+                        SortKey::Name => sa.name.cmp(&sb.name),
+                        SortKey::Rate => {
+                            let ra = sa.stats.activation_rate.unwrap_or(-1.0);
+                            let rb = sb.stats.activation_rate.unwrap_or(-1.0);
+                            rb.partial_cmp(&ra).unwrap_or(std::cmp::Ordering::Equal)
+                        }
+                        SortKey::Score => sb
+                            .stats
+                            .delete_score
+                            .partial_cmp(&sa.stats.delete_score)
+                            .unwrap_or(std::cmp::Ordering::Equal),
+                        SortKey::LastHit => sb.stats.last_hit_at.cmp(&sa.stats.last_hit_at),
+                        SortKey::Author => Self::opt_cmp(&sa.author, &sb.author)
+                            .then_with(|| sa.name.cmp(&sb.name)),
+                        SortKey::Source => Self::source_rank(sa.source)
+                            .cmp(&Self::source_rank(sb.source))
+                            .then_with(|| sa.name.cmp(&sb.name)),
+                    }
+                });
             }
-        });
+            ListView::Plugins => {
+                idxs.sort_by(|&a, &b| self.plugins[a].name.cmp(&self.plugins[b].name));
+            }
+            ListView::Mcp => {
+                idxs.sort_by(|&a, &b| self.mcp_servers[a].name.cmp(&self.mcp_servers[b].name));
+            }
+        }
 
         self.filtered_indices = idxs;
         if self.selected >= self.filtered_indices.len() {
             self.selected = self.filtered_indices.len().saturating_sub(1);
         }
         self.sync_list_state();
+    }
+
+    fn plugin_matches(&self, plugin: &PluginRecord) -> bool {
+        if let Some(scope) = self.filters.scope
+            && plugin.scope != scope
+        {
+            return false;
+        }
+        if !self.filters.agents.is_empty()
+            && !plugin
+                .agents
+                .iter()
+                .any(|a| self.filters.agents.contains(a))
+        {
+            return false;
+        }
+        if !self.filters.query.is_empty() {
+            let q = self.filters.query.to_lowercase();
+            let hay = format!(
+                "{} {} {}",
+                plugin.name.to_lowercase(),
+                plugin.description.to_lowercase(),
+                plugin.spec.to_lowercase()
+            );
+            if !hay.contains(&q) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn mcp_matches(&self, mcp: &McpServerRecord) -> bool {
+        if let Some(scope) = self.filters.scope
+            && mcp.scope != scope
+        {
+            return false;
+        }
+        if !self.filters.agents.is_empty()
+            && !mcp.agents.iter().any(|a| self.filters.agents.contains(a))
+        {
+            return false;
+        }
+        if !self.filters.query.is_empty() {
+            let q = self.filters.query.to_lowercase();
+            let hay = format!(
+                "{} {} {}",
+                mcp.name.to_lowercase(),
+                mcp.plugin.as_deref().unwrap_or("").to_lowercase(),
+                mcp.endpoint_label().to_lowercase()
+            );
+            if !hay.contains(&q) {
+                return false;
+            }
+        }
+        true
     }
 
     /// author sort keeps `None` (unknown) at the end.
@@ -452,9 +711,30 @@ impl App {
     }
 
     pub fn selected_skill(&self) -> Option<&SkillRecord> {
+        if self.list_view != ListView::Skills {
+            return None;
+        }
         self.filtered_indices
             .get(self.selected)
             .and_then(|&i| self.skills.get(i))
+    }
+
+    pub fn selected_plugin(&self) -> Option<&PluginRecord> {
+        if self.list_view != ListView::Plugins {
+            return None;
+        }
+        self.filtered_indices
+            .get(self.selected)
+            .and_then(|&i| self.plugins.get(i))
+    }
+
+    pub fn selected_mcp(&self) -> Option<&McpServerRecord> {
+        if self.list_view != ListView::Mcp {
+            return None;
+        }
+        self.filtered_indices
+            .get(self.selected)
+            .and_then(|&i| self.mcp_servers.get(i))
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
@@ -528,12 +808,16 @@ impl App {
             KeyCode::Char('R') => {
                 self.pending_action = Some(PendingAction::AnalyzeActivations);
             }
-            KeyCode::Char('a') => {
-                self.mode = Mode::AddBackend;
+            KeyCode::Char('t') => {
+                self.list_view = self.list_view.next();
+                self.selected = 0;
+                self.recompute_view();
+                self.status = format!("view: {}", self.list_view.as_str());
             }
             KeyCode::Char(' ') => self.toggle_check_current(),
             KeyCode::Char('*') => self.select_all_visible(),
             KeyCode::Char('x') => self.clear_checked(),
+            KeyCode::Char('a') => self.begin_add(),
             KeyCode::Char('d') => self.begin_delete(),
             KeyCode::Char('u') => self.begin_update(),
             KeyCode::Char('?') => self.mode = Mode::Help,
@@ -624,13 +908,53 @@ impl App {
         self.add_results.clear();
         self.add_package.clear();
         self.add_skill.clear();
+        self.add_plugin = false;
         self.add_agents = Agent::primary().to_vec();
         self.mode = Mode::List;
         self.status = "add cancelled".into();
     }
 
+    fn begin_add(&mut self) {
+        match self.list_view {
+            ListView::Mcp => {
+                self.show_message(
+                    "MCP servers are bundled in plugins. Switch to the plugins view (t) to add from a catalog.".into(),
+                );
+            }
+            ListView::Plugins => {
+                if !self.claude_available && !self.copilot_available && !self.codex_available {
+                    self.show_message(
+                        "no plugin catalog CLI on PATH (claude / copilot / codex)".into(),
+                    );
+                    return;
+                }
+                self.add_plugin = true;
+                self.add_agents = plugin_add_default_agents(
+                    self.claude_available,
+                    self.copilot_available,
+                    self.codex_available,
+                );
+                self.mode = Mode::AddQuery;
+                self.input.clear();
+                self.status = "plugin spec: name@marketplace".into();
+            }
+            ListView::Skills => {
+                self.add_plugin = false;
+                self.mode = Mode::AddBackend;
+            }
+        }
+    }
+
     fn enter_add_agent(&mut self) {
-        self.add_agents = Agent::primary().to_vec();
+        if self.add_plugin {
+            self.add_agents = plugin_add_default_agents(
+                self.claude_available,
+                self.copilot_available,
+                self.codex_available,
+            );
+        } else {
+            self.add_agents = Agent::primary().to_vec();
+        }
         self.agent_focus = 0;
         self.mode = Mode::AddAgent;
     }
@@ -665,7 +989,11 @@ impl App {
             KeyCode::Char('q') if self.input.is_empty() => self.cancel_add(),
             KeyCode::Esc => {
                 self.input.clear();
-                self.mode = Mode::AddBackend;
+                if self.add_plugin {
+                    self.cancel_add();
+                } else {
+                    self.mode = Mode::AddBackend;
+                }
             }
             KeyCode::Enter => {
                 if self.input.trim().is_empty() {
@@ -685,6 +1013,13 @@ impl App {
     }
 
     fn run_add_search(&mut self) -> Result<()> {
+        if self.add_plugin {
+            self.add_package = self.add_query.trim().to_string();
+            self.add_skill.clear();
+            self.enter_add_agent();
+            self.status = format!("plugin {} → エージェント選択", self.add_package);
+            return Ok(());
+        }
         let runner = SystemCommandRunner;
         match self.add_backend {
             AddBackend::GhSkill => {
@@ -760,12 +1095,12 @@ impl App {
     }
 
     fn handle_add_agent_key(&mut self, key: KeyEvent) {
-        if handle_agent_list_keys(
-            key,
-            &mut self.add_agents,
-            Agent::all(), // allow installing to any known host
-            &mut self.agent_focus,
-        ) {
+        let available: &[Agent] = if self.add_plugin {
+            plugin_cli_agents()
+        } else {
+            Agent::all()
+        };
+        if handle_agent_list_keys(key, &mut self.add_agents, available, &mut self.agent_focus) {
             return;
         }
         match key.code {
@@ -812,46 +1147,157 @@ impl App {
     /// Queue the add as a pending operation; the executor runs the CLI, does the
     /// full reload, and composes the result message.
     fn finish_add(&mut self) {
+        let agents = std::mem::take(&mut self.add_agents);
+        let scope = self.add_scope;
+        let add_plugin = self.add_plugin;
+        let package = std::mem::take(&mut self.add_package);
         let skill = if self.add_skill.is_empty() {
             "*".to_string()
         } else {
             std::mem::take(&mut self.add_skill)
         };
-        let package = std::mem::take(&mut self.add_package);
-        let agents = std::mem::take(&mut self.add_agents);
         let backend = self.add_backend;
-        let scope = self.add_scope;
+        self.add_plugin = false;
         self.add_query.clear();
         self.add_results.clear();
         self.add_result_idx = 0;
         self.mode = Mode::List;
-        self.pending_action = Some(PendingAction::Add {
-            backend,
-            package,
-            skill,
-            agents,
-            scope,
-        });
+        if add_plugin {
+            self.pending_action = Some(PendingAction::PluginAdd {
+                spec: package,
+                agents,
+                scope,
+            });
+        } else {
+            self.pending_action = Some(PendingAction::Add {
+                backend,
+                package,
+                skill,
+                agents,
+                scope,
+            });
+        }
     }
 
     fn begin_delete(&mut self) {
-        let targets = self.operation_targets();
-        if targets.is_empty() {
-            return;
+        match self.list_view {
+            ListView::Mcp => {
+                let mcps = self.operation_mcp();
+                if mcps.is_empty() {
+                    return;
+                }
+                let mut plugins = Vec::new();
+                let mut missing = Vec::new();
+                let mut standalone = Vec::new();
+                for mcp in &mcps {
+                    let Some(plugin_name) = mcp.plugin.as_deref() else {
+                        standalone.push(mcp.name.clone());
+                        continue;
+                    };
+                    let found: Vec<PluginRecord> = self
+                        .plugins
+                        .iter()
+                        .filter(|p| p.name == plugin_name || p.id == plugin_name)
+                        .cloned()
+                        .collect();
+                    if found.is_empty() {
+                        missing.push(format!("{} ({plugin_name})", mcp.name));
+                    } else {
+                        for plugin in found {
+                            if !plugins
+                                .iter()
+                                .any(|p: &PluginRecord| p.key() == plugin.key())
+                            {
+                                plugins.push(plugin);
+                            }
+                        }
+                    }
+                }
+                if plugins.is_empty() {
+                    let mut msg = String::new();
+                    if !standalone.is_empty() {
+                        msg.push_str("standalone MCP configs are not deleted by skls");
+                    }
+                    if !missing.is_empty() {
+                        if !msg.is_empty() {
+                            msg.push('\n');
+                        }
+                        msg.push_str(&format!(
+                            "parent plugin not in inventory: {}",
+                            missing.join(", ")
+                        ));
+                    }
+                    self.show_message(if msg.is_empty() {
+                        "nothing to delete".into()
+                    } else {
+                        msg
+                    });
+                    return;
+                }
+                self.delete_plugins = plugins;
+                self.delete_skills.clear();
+                self.delete_agents = union_plugin_agents(self.delete_plugins.iter());
+                self.agent_focus = 0;
+                self.refresh_delete_plans();
+                self.mode = Mode::DeleteConfirm;
+                self.status =
+                    "MCP servers are bundled in plugins — uninstall the parent plugin?".into();
+            }
+            ListView::Plugins => {
+                let targets = self.operation_plugins();
+                if targets.is_empty() {
+                    return;
+                }
+                self.delete_plugins = targets;
+                self.delete_skills.clear();
+                self.delete_agents = union_plugin_agents(self.delete_plugins.iter());
+                self.agent_focus = 0;
+                self.refresh_delete_plans();
+                self.mode = Mode::DeleteConfirm;
+            }
+            ListView::Skills => {
+                let targets = self.operation_targets();
+                if targets.is_empty() {
+                    return;
+                }
+                let deletable: Vec<SkillRecord> = targets
+                    .into_iter()
+                    .filter(|s| !s.agents.is_empty())
+                    .collect();
+                if deletable.is_empty() {
+                    self.show_message("no agent locations to delete".into());
+                    return;
+                }
+                self.delete_plugins.clear();
+                self.delete_agents = union_agents(deletable.iter());
+                self.delete_skills = deletable;
+                self.agent_focus = 0;
+                self.refresh_delete_plans();
+                self.mode = Mode::DeleteConfirm;
+            }
         }
-        let deletable: Vec<SkillRecord> = targets
-            .into_iter()
-            .filter(|s| !s.agents.is_empty())
-            .collect();
-        if deletable.is_empty() {
-            self.show_message("no agent locations to delete".into());
-            return;
+    }
+
+    fn operation_plugins(&self) -> Vec<PluginRecord> {
+        if self.checked_plugins.is_empty() {
+            return self.selected_plugin().cloned().into_iter().collect();
         }
-        self.delete_agents = union_agents(deletable.iter());
-        self.delete_skills = deletable;
-        self.agent_focus = 0;
-        self.refresh_delete_plans();
-        self.mode = Mode::DeleteConfirm;
+        self.plugins
+            .iter()
+            .filter(|p| self.checked_plugins.contains(&p.key()))
+            .cloned()
+            .collect()
+    }
+
+    fn operation_mcp(&self) -> Vec<McpServerRecord> {
+        if self.checked_mcp.is_empty() {
+            return self.selected_mcp().cloned().into_iter().collect();
+        }
+        self.mcp_servers
+            .iter()
+            .filter(|m| self.checked_mcp.contains(&m.key()))
+            .cloned()
+            .collect()
     }
 
     fn handle_delete_key(&mut self, key: KeyEvent) -> Result<()> {
@@ -871,6 +1317,19 @@ impl App {
                 self.cancel_delete();
             }
             KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                if !self.delete_plugins.is_empty() {
+                    let plans = std::mem::take(&mut self.plugin_delete_plans_cache);
+                    self.delete_plugins.clear();
+                    self.delete_skills.clear();
+                    self.delete_agents.clear();
+                    if plans.is_empty() {
+                        self.show_message("nothing to delete for selected agents".into());
+                    } else {
+                        self.mode = Mode::List;
+                        self.pending_action = Some(PendingAction::PluginDelete(plans));
+                    }
+                    return Ok(());
+                }
                 let plans = std::mem::take(&mut self.delete_plans_cache);
                 self.delete_skills.clear();
                 self.delete_agents.clear();
@@ -887,34 +1346,62 @@ impl App {
     }
 
     fn begin_update(&mut self) {
-        if !self.gh_available && !self.npx_available {
-            self.show_message("neither gh nor npx available on PATH".into());
-            return;
+        match self.list_view {
+            ListView::Mcp => {
+                self.show_message(
+                    "Update MCP by updating the parent plugin (t → plugins, then u).".into(),
+                );
+            }
+            ListView::Plugins => {
+                if !self.claude_available && !self.copilot_available && !self.codex_available {
+                    self.show_message(
+                        "no plugin catalog CLI on PATH (claude / copilot / codex)".into(),
+                    );
+                    return;
+                }
+                let targets = self.operation_plugins();
+                if targets.is_empty() {
+                    return;
+                }
+                self.update_plugins = targets;
+                self.update_skills.clear();
+                self.update_agents = union_plugin_agents(self.update_plugins.iter());
+                self.agent_focus = 0;
+                self.mode = Mode::UpdateAgents;
+            }
+            ListView::Skills => {
+                if !self.gh_available && !self.npx_available {
+                    self.show_message("neither gh nor npx available on PATH".into());
+                    return;
+                }
+                let targets = self.operation_targets();
+                if targets.is_empty() {
+                    return;
+                }
+                let with_agents: Vec<SkillRecord> = targets
+                    .into_iter()
+                    .filter(|s| !s.agents.is_empty())
+                    .collect();
+                if with_agents.is_empty() {
+                    self.show_message("no agent locations to update".into());
+                    return;
+                }
+                self.update_plugins.clear();
+                self.update_suggested = suggested_update_backend_for(&with_agents);
+                self.update_agents = union_agents(with_agents.iter());
+                self.update_skills = with_agents;
+                self.update_jobs.clear();
+                self.agent_focus = 0;
+                self.mode = Mode::UpdateAgents;
+            }
         }
-        let targets = self.operation_targets();
-        if targets.is_empty() {
-            return;
-        }
-        let with_agents: Vec<SkillRecord> = targets
-            .into_iter()
-            .filter(|s| !s.agents.is_empty())
-            .collect();
-        if with_agents.is_empty() {
-            self.show_message("no agent locations to update".into());
-            return;
-        }
-        self.update_suggested = suggested_update_backend_for(&with_agents);
-        self.update_agents = union_agents(with_agents.iter());
-        self.update_skills = with_agents;
-        self.update_jobs.clear();
-        self.agent_focus = 0;
-        self.mode = Mode::UpdateAgents;
     }
 
     fn cancel_update(&mut self) {
         self.update_skills.clear();
         self.update_jobs.clear();
         self.update_agents.clear();
+        self.update_plugins.clear();
         self.update_suggested = None;
         self.mode = Mode::List;
         self.status = "update cancelled".into();
@@ -940,6 +1427,14 @@ impl App {
     fn confirm_update_agents(&mut self) {
         if self.update_agents.is_empty() {
             self.status = "select at least one agent".into();
+            return;
+        }
+        if !self.update_plugins.is_empty() {
+            let plugins = std::mem::take(&mut self.update_plugins);
+            let agents = std::mem::take(&mut self.update_agents);
+            self.update_skills.clear();
+            self.mode = Mode::List;
+            self.pending_action = Some(PendingAction::PluginUpdate { plugins, agents });
             return;
         }
         let agents = self.update_agents.clone();
@@ -1024,6 +1519,15 @@ impl App {
     /// Current / total step numbers for the add wizard, owned by the state
     /// machine (rendering just displays them).
     pub fn add_wizard_step(&self) -> (u8, u8) {
+        if self.add_plugin {
+            let current = match self.mode {
+                Mode::AddQuery => 1,
+                Mode::AddAgent => 2,
+                Mode::AddScope => 3,
+                _ => 1,
+            };
+            return (current, 3);
+        }
         let total = match self.add_backend {
             AddBackend::GhSkill => 5,
             AddBackend::NpxSkills => 4,
@@ -1039,6 +1543,46 @@ impl App {
             _ => 1,
         };
         (current, total)
+    }
+
+    pub fn dump_json_value(&self) -> serde_json::Value {
+        serde_json::json!({
+            "skills": self.skills.iter().map(|s| serde_json::json!({
+                "id": s.id,
+                "name": s.name,
+                "scope": s.scope.as_str(),
+                "agents": s.agents.iter().map(|a| a.as_str()).collect::<Vec<_>>(),
+                "source": s.source.as_str(),
+                "author": s.author,
+                "activation_rate": s.stats.activation_rate,
+                "delete_score": s.stats.delete_score,
+                "hits": s.stats.hits,
+                "sessions_total": s.stats.sessions_total,
+            })).collect::<Vec<_>>(),
+            "plugins": self.plugins.iter().map(|p| serde_json::json!({
+                "id": p.id,
+                "name": p.name,
+                "spec": p.spec,
+                "scope": p.scope.as_str(),
+                "agents": p.agents.iter().map(|a| a.as_str()).collect::<Vec<_>>(),
+                "marketplace": p.marketplace,
+                "author": p.author,
+                "version": p.version,
+                "skills": p.skill_names,
+                "mcp": p.mcp_names,
+            })).collect::<Vec<_>>(),
+            "mcp_servers": self.mcp_servers.iter().map(|m| serde_json::json!({
+                "id": m.id,
+                "name": m.name,
+                "transport": m.transport.as_str(),
+                "command": m.command,
+                "args": m.args,
+                "url": m.url,
+                "plugin": m.plugin,
+                "scope": m.scope.as_str(),
+                "agents": m.agents.iter().map(|a| a.as_str()).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+        })
     }
 }
 
@@ -1130,7 +1674,22 @@ fn union_agents<'a>(skills: impl Iterator<Item = &'a SkillRecord>) -> Vec<Agent>
             }
         }
     }
-    // Stable display order from Agent::all().
+    Agent::all()
+        .iter()
+        .copied()
+        .filter(|a| agents.contains(a))
+        .collect()
+}
+
+fn union_plugin_agents<'a>(plugins: impl Iterator<Item = &'a PluginRecord>) -> Vec<Agent> {
+    let mut agents = Vec::new();
+    for plugin in plugins {
+        for agent in &plugin.agents {
+            if !agents.contains(agent) {
+                agents.push(*agent);
+            }
+        }
+    }
     Agent::all()
         .iter()
         .copied()
@@ -1440,5 +1999,139 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE))
             .unwrap();
         assert_eq!(app.agent_focus, 0);
+    }
+
+    fn sample_plugin() -> PluginRecord {
+        PluginRecord {
+            id: "fmt".into(),
+            name: "fmt".into(),
+            description: "format".into(),
+            version: Some("1.0".into()),
+            author: None,
+            marketplace: Some("claude-plugins-official".into()),
+            spec: "fmt@claude-plugins-official".into(),
+            agents: vec![Agent::ClaudeCode],
+            locations: vec![crate::model::SkillLocation {
+                agent: Agent::ClaudeCode,
+                scope: Scope::User,
+                path: std::path::PathBuf::from("/tmp/.claude/plugins/fmt"),
+                kind: InstallKind::Copy,
+                resolved: None,
+            }],
+            skill_names: vec!["fmt".into()],
+            mcp_names: vec!["docs".into()],
+            source_url: None,
+            scope: Scope::User,
+        }
+    }
+
+    #[test]
+    fn t_cycles_skills_plugins_mcp() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = sample_app();
+        app.plugins = vec![sample_plugin()];
+        app.mcp_servers = vec![crate::model::McpServerRecord {
+            id: "docs".into(),
+            name: "docs".into(),
+            transport: crate::model::McpTransport::Stdio,
+            command: Some("npx".into()),
+            args: vec!["-y".into()],
+            url: None,
+            plugin: Some("fmt".into()),
+            agents: vec![Agent::ClaudeCode],
+            locations: vec![],
+            scope: Scope::User,
+        }];
+        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.list_view, ListView::Plugins);
+        assert_eq!(app.selected_plugin().unwrap().name, "fmt");
+        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.list_view, ListView::Mcp);
+        assert_eq!(app.selected_mcp().unwrap().name, "docs");
+        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.list_view, ListView::Skills);
+    }
+
+    #[test]
+    fn plugin_add_flow_queues_pending_action() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = sample_app();
+        app.list_view = ListView::Plugins;
+        app.claude_available = true;
+        app.copilot_available = false;
+        app.codex_available = false;
+        app.begin_add();
+        assert_eq!(app.mode, Mode::AddQuery);
+        assert!(app.add_plugin);
+        for c in "fmt@claude-plugins-official".chars() {
+            app.handle_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+                .unwrap();
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.mode, Mode::AddAgent);
+        assert_eq!(app.add_agents, vec![Agent::ClaudeCode]);
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.mode, Mode::AddScope);
+        app.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE))
+            .unwrap();
+        match app.pending_action {
+            Some(PendingAction::PluginAdd {
+                spec,
+                agents,
+                scope,
+            }) => {
+                assert_eq!(spec, "fmt@claude-plugins-official");
+                assert_eq!(agents, vec![Agent::ClaudeCode]);
+                assert_eq!(scope, Scope::User);
+            }
+            other => panic!("unexpected pending action: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mcp_add_redirects_to_plugins_message() {
+        let mut app = sample_app();
+        app.list_view = ListView::Mcp;
+        app.begin_add();
+        assert_eq!(app.mode, Mode::Message);
+        assert!(app.message.contains("plugins view"));
+    }
+
+    #[test]
+    fn plugin_delete_queues_pending_action() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = sample_app();
+        app.plugins = vec![sample_plugin()];
+        app.list_view = ListView::Plugins;
+        app.recompute_view();
+        app.begin_delete();
+        assert_eq!(app.mode, Mode::DeleteConfirm);
+        assert!(!app.plugin_delete_plans_cache.is_empty());
+        app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE))
+            .unwrap();
+        assert!(matches!(
+            app.pending_action,
+            Some(PendingAction::PluginDelete(_))
+        ));
+    }
+
+    #[test]
+    fn dump_json_includes_plugins_and_mcp() {
+        let mut app = sample_app();
+        app.plugins = vec![sample_plugin()];
+        let value = app.dump_json_value();
+        assert!(value.get("skills").and_then(|v| v.as_array()).is_some());
+        assert_eq!(value["plugins"][0]["spec"], "fmt@claude-plugins-official");
+        assert!(
+            value
+                .get("mcp_servers")
+                .and_then(|v| v.as_array())
+                .is_some()
+        );
     }
 }
