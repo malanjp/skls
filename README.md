@@ -16,7 +16,7 @@ See which skills are installed, where they apply, and whether they are used — 
 ## Features
 
 - **Inventory**: 27 agent hosts (Cursor loads `~/.agents/skills` too). Scans skills bundled in Claude Code / Cursor / Codex / agents plugins. Filter by project / user scope and agent; multi-select for bulk actions
-- **Sidebar**: left nav splits the list into **manual** (plus plugin-bundled skills) / **gh** / **npx** / **plugins** / **mcp**. `h`/`l` (or Tab) move focus; `j`/`k` on the sidebar changes category; `t` still cycles
+- **Sidebar**: left nav splits the list into **manual** (plus plugin-bundled skills) / **gh** / **npx** / **plugins** / **mcp**, then project scan roots (divider between the two groups). `h`/`l` (or Tab) move focus; `j`/`k` on the sidebar changes category; `t` still cycles
 - **Metrics**: Compute activation rate from conversation logs and show a delete-recommendation score (`delete_score`)
 - **Add**: Skills via `gh skill` / `npx skills`. Plugins via `claude plugin` / `copilot plugin` / `codex plugin` (Cursor has no catalog CLI)
 - **Delete**: Remove inventory paths (confirmation required). npx-sourced skills also run `npx skills remove`. Plugin delete uses the host catalog CLI first. Warns on shared-store and plugin paths
@@ -64,30 +64,35 @@ skls --dump-json                     # print inventory JSON: { skills, plugins, 
 
 On startup the skill list appears first, then activation is sampled. With defaults, the list usually shows within about 1–2 seconds.
 
-### Project directories
+### Config file
 
-`skls` treats extra folders in `~/.config/skls/config.toml` (`$XDG_CONFIG_HOME/skls/config.toml` when set) as project-scope scan roots, in addition to the current directory (or `--project-root`).
+`~/.config/skls/config.toml` (`$XDG_CONFIG_HOME/skls/config.toml` when set). Extra folders are project-scope scan roots, in addition to the current directory (or `--project-root`). If the file is missing, skls walks only these home children — `repos`, `src`, `dev`, `code`, `work`, `projects`, `orca`, `Documents`, `Developer`, `ghq`, `git` — to depth 6 (cap 4000 visits / 80 projects) for directories that contain `.cursor/skills`, `.claude/skills`, `.agents/skills`, or `.codex/skills`, then writes that list. If nothing is found, the file is not created (the next launch can try again). An existing file is never overwritten. Delete the file to rediscover.
 
 ```toml
 projects = [
   "~/src/my-app",
   "/abs/path/to/other-app",
 ]
+
+# Activation analysis defaults (CLI flags win when passed)
+window_days = 30
+max_sessions = 80
+max_bytes = 262144
 ```
 
-If the current directory (or `--project-root`) is your home directory, it is not scanned as a project. Listed paths still are. Skills with the same name in different projects show as separate rows. The list `PROJECT` column is the directory name; user-scope rows show `-`.
+Relative paths, missing paths, and home itself are skipped with a warning. `~` expands to home. If the current directory (or `--project-root`) is home, that path is not scanned as a project; listed `projects` still are. Skills with the same name in different projects show as separate rows. The list `PROJECT` column is the directory name; user-scope rows show `-`.
 
-Project-scope add still targets only the active root (cwd / `--project-root`). If that root is home, choose user scope or pass `--project-root`.
+Project-scope add still targets only the active root (cwd / `--project-root`), not the project selected in the sidebar. If that root is home, choose user scope or pass `--project-root`.
 
 ## Screen
 
-The left sidebar splits the inventory: **manual** (plus plugin-bundled skills) · **gh** · **npx** · **plugins** · **mcp**. List in the center, detail on the right. `h`/`l` (or Tab) move focus between sidebar and list. `[ ]` / `[x]` mark multi-select.
+The left sidebar splits the inventory: **manual** (plus plugin-bundled skills) · **gh** · **npx** · **plugins** · **mcp**, then a gray divider, then **projects** from config / cwd (directory name). The divider is visual only (not selectable). Selecting a project shows only skills whose paths sit under that root. List in the center, detail on the right. `h`/`l` (or Tab) move focus between sidebar and list. `[ ]` / `[x]` mark multi-select.
 
-**Skills** columns: `NAME` · `SCOPE` · `PROJECT` · `SRC` (`plugin` / `gh skill` / `npx skills` / `manual`) · `AUTHOR` · `RATE` · `SCORE`. Default sort is `delete_score` descending (higher = stronger delete candidate). `S` toggles asc/desc; cycling with `s` resets to that key's default direction. Author comes from the SKILL.md frontmatter, the plugin manifest, or the GitHub owner of the source repo.
+**Skills** columns: `NAME` · `SCOPE` · `PROJECT` · `SRC` (`plugin` / `gh skill` / `npx skills` / `manual`) · `AUTHOR` · `RATE` · `SCORE`. `NAME` / `PROJECT` / `SRC` / `AUTHOR` grow with the longest visible value; leftover width goes to `NAME`. `SCOPE` / `RATE` / `SCORE` stay fixed. Default sort is `delete_score` descending (higher = stronger delete candidate). `S` toggles asc/desc; cycling with `s` resets to that key's default direction. Author comes from the SKILL.md frontmatter, the plugin manifest, or the GitHub owner of the source repo.
 
-**Plugins** columns: `NAME` · `SCOPE` · `MARKET` · `SK` (bundled skills) · `MCP`.
+**Plugins** columns: `NAME` · `SCOPE` · `MARKET` · `SK` (bundled skills) · `MCP`. `NAME` / `MARKET` grow the same way.
 
-**MCP** columns: `NAME` · `TRANS` (`stdio` / `http` / `sse`) · `PLUGIN` · `AGENTS`. Servers are read from plugin `mcp.json` / `.mcp.json` (Agent Plugins 1.0, plus a looser `command`/`url` form).
+**MCP** columns: `NAME` · `TRANS` (`stdio` / `http` / `sse`) · `PLUGIN` · `AGENTS`. `NAME` / `PLUGIN` / `AGENTS` grow the same way. Servers are read from plugin `mcp.json` / `.mcp.json` (Agent Plugins 1.0, plus a looser `command`/`url` form).
 
 `sample:` in the title is the activation analysis cap; `sampled (-N older)` in the status is how many older sessions were skipped.
 
@@ -101,7 +106,7 @@ The left sidebar splits the inventory: **manual** (plus plugin-bundled skills) �
 | `Ctrl+B` / `PgUp` | Page up (no wrap; list) |
 | `gg` / `Home` | Jump to first row (list) / first nav item (sidebar) |
 | `L` / `Ctrl+L` / `End` | Jump to last row (list) / last nav item (sidebar) |
-| `t` | Cycle sidebar (manual → gh → npx → plugins → mcp) |
+| `t` | Cycle sidebar (manual → gh → npx → plugins → mcp → projects) |
 | `Space` | Toggle row selection |
 | `*` | Select / clear all visible |
 | `x` | Clear selection |

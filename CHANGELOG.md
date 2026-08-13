@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- User config at `~/.config/skls/config.toml` (`$XDG_CONFIG_HOME/skls/config.toml`). `projects` lists extra project-scope scan roots. `window_days` / `max_sessions` / `max_bytes` supply defaults when CLI flags are omitted. If the file is missing, skls discovers project-scope skill directories under well-known home children (`repos`, `src`, `dev`, `code`, `work`, `projects`, `orca`, `Documents`, `Developer`, `ghq`, `git`) and writes the config. Nothing found → no file (retry next launch). An existing file is never overwritten
+- Skills with the same name in different projects are separate rows. The list shows a `PROJECT` column (directory name; user-scope is `-`)
+- Left sidebar lists scan-root projects; selecting one filters skills to paths under that root. A non-selectable divider separates source nav from projects. Add / update with project scope still uses cwd / `--project-root`
+
+### Changed
+
+- Skill / plugin / MCP list columns grow with visible content (`NAME` / `PROJECT` / `SRC` / `AUTHOR` and the plugin / MCP equivalents). Leftover width goes to the name column
+
+### Fixed
+
+- Sidebar project counts are cached per view change instead of recomputed every frame. First-run project discovery walks only the seed directories above, not the whole home tree
+
 ## [0.5.0] - 2026-08-13
 
 ### Highlights

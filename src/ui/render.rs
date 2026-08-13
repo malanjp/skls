@@ -2,7 +2,7 @@
 
 use crate::analytics::delete_advice;
 use crate::app::{App, FocusPane, Mode};
-use crate::model::{Agent, ListView, NavItem, agents_label, plugin_cli_agents};
+use crate::model::{Agent, ListView, SidebarSel, agents_label, plugin_cli_agents};
 use crate::ops::AddBackend;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -83,7 +83,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
     let (sort_key, sort_dir) = app.displayed_sort();
     let title = format!(
         " skls  view:{}  scope:{}  agents:{}  sort:{}{}  window:{}d  sample:{}{selected} ",
-        app.nav.as_str(),
+        app.view_label(),
         scope_label(app.filters.scope),
         agents,
         sort_key.as_str(),
@@ -105,20 +105,21 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
     let panes = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(20),
-            Constraint::Percentage(55),
-            Constraint::Percentage(45),
+            Constraint::Length(22),
+            Constraint::Fill(55),
+            Constraint::Fill(45),
         ])
         .split(area);
 
     draw_sidebar(frame, app, panes[0]);
 
     app.list_page_rows = panes[1].height.saturating_sub(2).max(1) as usize;
+    let list_inner = panes[1].width.saturating_sub(2) as usize;
 
     let (items, list_title, detail) = match app.list_view {
-        ListView::Skills => skill_list_content(app),
-        ListView::Plugins => plugin_list_content(app),
-        ListView::Mcp => mcp_list_content(app),
+        ListView::Skills => skill_list_content(app, list_inner),
+        ListView::Plugins => plugin_list_content(app, list_inner),
+        ListView::Mcp => mcp_list_content(app, list_inner),
     };
 
     let list_border = if app.focus == FocusPane::List && app.mode == Mode::List {
@@ -150,13 +151,19 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 fn draw_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
-    let items: Vec<ListItem> = NavItem::ALL
-        .iter()
-        .map(|&item| {
-            let line = format!("{:<8} {:>3}", item.label(), app.nav_count(item));
-            ListItem::new(Line::from(line))
-        })
-        .collect();
+    let divider = app.sidebar_has_project_divider();
+    let mut items: Vec<ListItem> = Vec::new();
+    for sel in app.sidebar_entries() {
+        if divider && matches!(sel, SidebarSel::Project(0)) {
+            items.push(
+                ListItem::new(Line::from("──────────────"))
+                    .style(Style::default().fg(Color::DarkGray)),
+            );
+        }
+        let label = truncate(&app.sidebar_row_label(&sel), 12);
+        let line = format!("{label:<12} {:>3}", app.sidebar_row_count(&sel));
+        items.push(ListItem::new(Line::from(line)));
+    }
     let border = if app.focus == FocusPane::Sidebar && app.mode == Mode::List {
         Style::default().fg(Color::Cyan)
     } else {
@@ -180,23 +187,45 @@ fn draw_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
     frame.render_stateful_widget(list, area, &mut app.sidebar_state);
 }
 
-fn skill_list_content(app: &App) -> (Vec<ListItem<'static>>, String, String) {
+fn skill_list_content(
+    app: &App,
+    list_inner_width: usize,
+) -> (Vec<ListItem<'static>>, String, String) {
+    let budget = list_row_budget(list_inner_width);
+    let project_labels: Vec<String> = app
+        .filtered_indices
+        .iter()
+        .map(|&i| project_column_label(app.skills[i].project.as_ref()))
+        .collect();
+    let widths = skill_list_widths(
+        budget,
+        app.filtered_indices.iter().enumerate().map(|(idx, &i)| {
+            let s = &app.skills[i];
+            (
+                s.name.as_str(),
+                project_labels[idx].as_str(),
+                s.source.label(),
+                s.author.as_deref().unwrap_or("-"),
+            )
+        }),
+    );
     let items: Vec<ListItem> = app
         .filtered_indices
         .iter()
-        .map(|&skill_i| {
+        .enumerate()
+        .map(|(idx, &skill_i)| {
             let s = &app.skills[skill_i];
             let mark = if app.is_checked(s) { "[x]" } else { "[ ]" };
-            let project = project_column_label(s.project.as_ref());
             let line = format_skill_list_row(SkillListRow {
                 mark,
                 name: &s.name,
                 scope: s.scope.as_str(),
-                project: &project,
+                project: &project_labels[idx],
                 source: s.source.label(),
                 author: s.author.as_deref().unwrap_or("-"),
                 activation_rate: s.stats.activation_rate,
                 delete_score: s.stats.delete_score,
+                widths,
             });
             ListItem::new(Line::from(line))
         })
@@ -271,10 +300,21 @@ fn skill_list_content(app: &App) -> (Vec<ListItem<'static>>, String, String) {
         }
         None => "No skill selected".into(),
     };
-    (items, skill_list_title(app.checked_count()), detail)
+    (items, skill_list_title(app.checked_count(), widths), detail)
 }
 
-fn plugin_list_content(app: &App) -> (Vec<ListItem<'static>>, String, String) {
+fn plugin_list_content(
+    app: &App,
+    list_inner_width: usize,
+) -> (Vec<ListItem<'static>>, String, String) {
+    let budget = list_row_budget(list_inner_width);
+    let widths = plugin_list_widths(
+        budget,
+        app.filtered_indices.iter().map(|&i| {
+            let p = &app.plugins[i];
+            (p.name.as_str(), p.marketplace.as_deref().unwrap_or("-"))
+        }),
+    );
     let items: Vec<ListItem> = app
         .filtered_indices
         .iter()
@@ -292,6 +332,7 @@ fn plugin_list_content(app: &App) -> (Vec<ListItem<'static>>, String, String) {
                 p.marketplace.as_deref().unwrap_or("-"),
                 p.skill_names.len(),
                 p.mcp_names.len(),
+                widths,
             )))
         })
         .collect();
@@ -348,14 +389,39 @@ fn plugin_list_content(app: &App) -> (Vec<ListItem<'static>>, String, String) {
         }
         None => "No plugin selected".into(),
     };
-    (items, plugin_list_title(app.checked_count()), detail)
+    (
+        items,
+        plugin_list_title(app.checked_count(), widths),
+        detail,
+    )
 }
 
-fn mcp_list_content(app: &App) -> (Vec<ListItem<'static>>, String, String) {
+fn mcp_list_content(
+    app: &App,
+    list_inner_width: usize,
+) -> (Vec<ListItem<'static>>, String, String) {
+    let budget = list_row_budget(list_inner_width);
+    let agent_labels: Vec<String> = app
+        .filtered_indices
+        .iter()
+        .map(|&i| app.mcp_servers[i].agents_label())
+        .collect();
+    let widths = mcp_list_widths(
+        budget,
+        app.filtered_indices.iter().enumerate().map(|(idx, &i)| {
+            let m = &app.mcp_servers[i];
+            (
+                m.name.as_str(),
+                m.plugin.as_deref().unwrap_or("-"),
+                agent_labels[idx].as_str(),
+            )
+        }),
+    );
     let items: Vec<ListItem> = app
         .filtered_indices
         .iter()
-        .map(|&i| {
+        .enumerate()
+        .map(|(idx, &i)| {
             let m = &app.mcp_servers[i];
             let mark = if app.is_mcp_checked(m) { "[x]" } else { "[ ]" };
             ListItem::new(Line::from(format_mcp_list_row(
@@ -363,7 +429,8 @@ fn mcp_list_content(app: &App) -> (Vec<ListItem<'static>>, String, String) {
                 &m.name,
                 m.transport.as_str(),
                 m.plugin.as_deref().unwrap_or("-"),
-                &m.agents_label(),
+                &agent_labels[idx],
+                widths,
             )))
         })
         .collect();
@@ -403,7 +470,7 @@ fn mcp_list_content(app: &App) -> (Vec<ListItem<'static>>, String, String) {
         }
         None => "No MCP server selected".into(),
     };
-    (items, mcp_list_title(app.checked_count()), detail)
+    (items, mcp_list_title(app.checked_count(), widths), detail)
 }
 
 fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
@@ -456,7 +523,7 @@ Keys
   C-b / PgUp  page up (list)
   gg / Home   first
   L / C-l / End  last
-  t         cycle sidebar (manual → gh → npx → plugins → mcp)
+  t         cycle sidebar (manual → gh → npx → plugins → mcp → projects)
   Space     toggle select
   *         select/clear all visible
   x         clear selection
@@ -478,6 +545,8 @@ Sidebar
   npx       npx skills installs
   plugins   agent plugin packages
   mcp       MCP servers bundled in plugins
+  (name)    project scan root (config + cwd). Filters skills by path
+            add/update project scope still uses cwd / --project-root
 
 Plugins
   a  claude / copilot / codex plugin install  SPEC
@@ -1132,6 +1201,214 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
+const SKILL_ROW_FIXED: usize = 28;
+const PLUGIN_ROW_FIXED: usize = 20;
+const MCP_ROW_FIXED: usize = 13;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SkillListWidths {
+    name: usize,
+    project: usize,
+    src: usize,
+    author: usize,
+}
+
+impl SkillListWidths {
+    const MIN_NAME: usize = 16;
+    const MIN_PROJECT: usize = 16;
+    const MIN_SRC: usize = 10;
+    const MIN_AUTHOR: usize = 12;
+
+    #[cfg(test)]
+    fn compact() -> Self {
+        Self {
+            name: Self::MIN_NAME,
+            project: Self::MIN_PROJECT,
+            src: Self::MIN_SRC,
+            author: Self::MIN_AUTHOR,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PluginListWidths {
+    name: usize,
+    market: usize,
+}
+
+impl PluginListWidths {
+    const MIN_NAME: usize = 16;
+    const MIN_MARKET: usize = 16;
+
+    #[cfg(test)]
+    fn compact() -> Self {
+        Self {
+            name: Self::MIN_NAME,
+            market: Self::MIN_MARKET,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct McpListWidths {
+    name: usize,
+    plugin: usize,
+    agents: usize,
+}
+
+impl McpListWidths {
+    const MIN_NAME: usize = 16;
+    const MIN_PLUGIN: usize = 16;
+    const MIN_AGENTS: usize = 18;
+
+    #[cfg(test)]
+    fn compact() -> Self {
+        Self {
+            name: Self::MIN_NAME,
+            plugin: Self::MIN_PLUGIN,
+            agents: Self::MIN_AGENTS,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FlexCol {
+    min: usize,
+    want: usize,
+}
+
+fn list_row_budget(list_inner_width: usize) -> usize {
+    list_inner_width.saturating_sub(LIST_HIGHLIGHT.chars().count())
+}
+
+/// Grow columns toward content, then give leftover width to the first column.
+fn allocate_flex(budget: usize, cols: &[FlexCol]) -> Vec<usize> {
+    let min_sum: usize = cols.iter().map(|c| c.min).sum();
+    if budget <= min_sum {
+        return cols.iter().map(|c| c.min).collect();
+    }
+    let mut widths: Vec<usize> = cols.iter().map(|c| c.min).collect();
+    let mut left = budget - min_sum;
+    for (i, col) in cols.iter().enumerate() {
+        let take = col.want.saturating_sub(col.min).min(left);
+        widths[i] += take;
+        left -= take;
+    }
+    if let Some(first) = widths.first_mut() {
+        *first += left;
+    }
+    widths
+}
+
+fn skill_list_widths<'a, I>(row_budget: usize, rows: I) -> SkillListWidths
+where
+    I: IntoIterator<Item = (&'a str, &'a str, &'a str, &'a str)>,
+{
+    let mut want_name = SkillListWidths::MIN_NAME;
+    let mut want_project = SkillListWidths::MIN_PROJECT;
+    let mut want_author = SkillListWidths::MIN_AUTHOR;
+    for (name, project, _source, author) in rows {
+        want_name = want_name.max(name.chars().count());
+        want_project = want_project.max(project.chars().count());
+        want_author = want_author.max(author.chars().count());
+    }
+    let flex = row_budget.saturating_sub(SKILL_ROW_FIXED);
+    let widths = allocate_flex(
+        flex,
+        &[
+            FlexCol {
+                min: SkillListWidths::MIN_NAME,
+                want: want_name,
+            },
+            FlexCol {
+                min: SkillListWidths::MIN_PROJECT,
+                want: want_project,
+            },
+            FlexCol {
+                min: SkillListWidths::MIN_SRC,
+                want: SkillListWidths::MIN_SRC,
+            },
+            FlexCol {
+                min: SkillListWidths::MIN_AUTHOR,
+                want: want_author,
+            },
+        ],
+    );
+    SkillListWidths {
+        name: widths[0],
+        project: widths[1],
+        src: widths[2],
+        author: widths[3],
+    }
+}
+
+fn plugin_list_widths<'a, I>(row_budget: usize, rows: I) -> PluginListWidths
+where
+    I: IntoIterator<Item = (&'a str, &'a str)>,
+{
+    let mut want_name = PluginListWidths::MIN_NAME;
+    let mut want_market = PluginListWidths::MIN_MARKET;
+    for (name, market) in rows {
+        want_name = want_name.max(name.chars().count());
+        want_market = want_market.max(market.chars().count());
+    }
+    let flex = row_budget.saturating_sub(PLUGIN_ROW_FIXED);
+    let widths = allocate_flex(
+        flex,
+        &[
+            FlexCol {
+                min: PluginListWidths::MIN_NAME,
+                want: want_name,
+            },
+            FlexCol {
+                min: PluginListWidths::MIN_MARKET,
+                want: want_market,
+            },
+        ],
+    );
+    PluginListWidths {
+        name: widths[0],
+        market: widths[1],
+    }
+}
+
+fn mcp_list_widths<'a, I>(row_budget: usize, rows: I) -> McpListWidths
+where
+    I: IntoIterator<Item = (&'a str, &'a str, &'a str)>,
+{
+    let mut want_name = McpListWidths::MIN_NAME;
+    let mut want_plugin = McpListWidths::MIN_PLUGIN;
+    let mut want_agents = McpListWidths::MIN_AGENTS;
+    for (name, plugin, agents) in rows {
+        want_name = want_name.max(name.chars().count());
+        want_plugin = want_plugin.max(plugin.chars().count());
+        want_agents = want_agents.max(agents.chars().count());
+    }
+    let flex = row_budget.saturating_sub(MCP_ROW_FIXED);
+    let widths = allocate_flex(
+        flex,
+        &[
+            FlexCol {
+                min: McpListWidths::MIN_NAME,
+                want: want_name,
+            },
+            FlexCol {
+                min: McpListWidths::MIN_PLUGIN,
+                want: want_plugin,
+            },
+            FlexCol {
+                min: McpListWidths::MIN_AGENTS,
+                want: want_agents,
+            },
+        ],
+    );
+    McpListWidths {
+        name: widths[0],
+        plugin: widths[1],
+        agents: widths[2],
+    }
+}
+
 struct SkillListRow<'a> {
     mark: &'a str,
     name: &'a str,
@@ -1141,21 +1418,26 @@ struct SkillListRow<'a> {
     author: &'a str,
     activation_rate: Option<f64>,
     delete_score: f64,
+    widths: SkillListWidths,
 }
 
 /// Format one skill inventory row.
-/// Columns: mark(3) name(16) scope(7) project(16) src(10) author(12) rate(6) score(5).
+/// Fixed cells: mark(3) scope(7) rate(6) score(5). NAME/PROJECT/SRC/AUTHOR follow `widths`.
 fn format_skill_list_row(row: SkillListRow<'_>) -> String {
     let rate = format_rate_column(row.activation_rate);
     format!(
-        "{} {:<16} {:7} {:<16} {:<10} {:<12} {rate} {:>5.0}",
-        row.mark,
-        truncate(row.name, 16),
+        "{mark} {:<name_w$} {:7} {:<project_w$} {:<src_w$} {:<author_w$} {rate} {:>5.0}",
+        truncate(row.name, row.widths.name),
         row.scope,
-        truncate(row.project, 16),
-        truncate(row.source, 10),
-        truncate(row.author, 12),
-        row.delete_score
+        truncate(row.project, row.widths.project),
+        truncate(row.source, row.widths.src),
+        truncate(row.author, row.widths.author),
+        row.delete_score,
+        mark = row.mark,
+        name_w = row.widths.name,
+        project_w = row.widths.project,
+        src_w = row.widths.src,
+        author_w = row.widths.author,
     )
 }
 
@@ -1175,13 +1457,24 @@ fn format_rate_column(activation_rate: Option<f64>) -> String {
 }
 
 /// Block title aligned with [`format_skill_list_row`] under [`LIST_HIGHLIGHT`] spacing.
-fn skill_list_title(checked_count: usize) -> String {
+fn skill_list_title(checked_count: usize, widths: SkillListWidths) -> String {
     // Leading cells match LIST_HIGHLIGHT width so headers sit over row text
     // (HighlightSpacing::Always reserves that gutter for every row).
     let highlight_pad = " ".repeat(LIST_HIGHLIGHT.chars().count());
     let cols = format!(
-        "{highlight_pad}{:<3} {:<16} {:7} {:<16} {:<10} {:<12} {:>6} {:>5}",
-        "", "NAME", "SCOPE", "PROJECT", "SRC", "AUTHOR", "RATE", "SCORE"
+        "{highlight_pad}{:<3} {:<name_w$} {:7} {:<project_w$} {:<src_w$} {:<author_w$} {:>6} {:>5}",
+        "",
+        "NAME",
+        "SCOPE",
+        "PROJECT",
+        "SRC",
+        "AUTHOR",
+        "RATE",
+        "SCORE",
+        name_w = widths.name,
+        project_w = widths.project,
+        src_w = widths.src,
+        author_w = widths.author,
     );
     if checked_count > 0 {
         format!("{cols}  ({checked_count} selected) ")
@@ -1197,22 +1490,32 @@ fn format_plugin_list_row(
     marketplace: &str,
     skills: usize,
     mcp: usize,
+    widths: PluginListWidths,
 ) -> String {
     format!(
-        "{mark} {:<16} {:7} {:<16} {:>2} {:>3}",
-        truncate(name, 16),
+        "{mark} {:<name_w$} {:7} {:<market_w$} {:>2} {:>3}",
+        truncate(name, widths.name),
         scope,
-        truncate(marketplace, 16),
+        truncate(marketplace, widths.market),
         skills,
-        mcp
+        mcp,
+        name_w = widths.name,
+        market_w = widths.market,
     )
 }
 
-fn plugin_list_title(checked_count: usize) -> String {
+fn plugin_list_title(checked_count: usize, widths: PluginListWidths) -> String {
     let highlight_pad = " ".repeat(LIST_HIGHLIGHT.chars().count());
     let cols = format!(
-        "{highlight_pad}{:<3} {:<16} {:7} {:<16} {:>2} {:>3}",
-        "", "NAME", "SCOPE", "MARKET", "SK", "MCP"
+        "{highlight_pad}{:<3} {:<name_w$} {:7} {:<market_w$} {:>2} {:>3}",
+        "",
+        "NAME",
+        "SCOPE",
+        "MARKET",
+        "SK",
+        "MCP",
+        name_w = widths.name,
+        market_w = widths.market,
     );
     if checked_count > 0 {
         format!("{cols}  ({checked_count} selected) ")
@@ -1227,21 +1530,32 @@ fn format_mcp_list_row(
     transport: &str,
     plugin: &str,
     agents: &str,
+    widths: McpListWidths,
 ) -> String {
     format!(
-        "{mark} {:<16} {:<6} {:<16} {}",
-        truncate(name, 16),
+        "{mark} {:<name_w$} {:<6} {:<plugin_w$} {:<agents_w$}",
+        truncate(name, widths.name),
         truncate(transport, 6),
-        truncate(plugin, 16),
-        truncate(agents, 18)
+        truncate(plugin, widths.plugin),
+        truncate(agents, widths.agents),
+        name_w = widths.name,
+        plugin_w = widths.plugin,
+        agents_w = widths.agents,
     )
 }
 
-fn mcp_list_title(checked_count: usize) -> String {
+fn mcp_list_title(checked_count: usize, widths: McpListWidths) -> String {
     let highlight_pad = " ".repeat(LIST_HIGHLIGHT.chars().count());
     let cols = format!(
-        "{highlight_pad}{:<3} {:<16} {:<6} {:<16} {}",
-        "", "NAME", "TRANS", "PLUGIN", "AGENTS"
+        "{highlight_pad}{:<3} {:<name_w$} {:<6} {:<plugin_w$} {:<agents_w$}",
+        "",
+        "NAME",
+        "TRANS",
+        "PLUGIN",
+        "AGENTS",
+        name_w = widths.name,
+        plugin_w = widths.plugin,
+        agents_w = widths.agents,
     );
     if checked_count > 0 {
         format!("{cols}  ({checked_count} selected) ")
@@ -1256,6 +1570,7 @@ mod tests {
 
     #[test]
     fn skill_list_headers_align_with_row_columns() {
+        let widths = SkillListWidths::compact();
         let highlight_pad = " ".repeat(LIST_HIGHLIGHT.chars().count());
         let row = format!(
             "{highlight_pad}{}",
@@ -1268,6 +1583,7 @@ mod tests {
                 author: "vercel-labs",
                 activation_rate: Some(0.0),
                 delete_score: 85.0,
+                widths,
             })
         );
         // Same skeleton as the title, with data values in each column.
@@ -1275,7 +1591,7 @@ mod tests {
             "{highlight_pad}{:<3} {:<16} {:7} {:<16} {:<10} {:<12} {:>6} {:>5} ",
             "", "NAME", "SCOPE", "PROJECT", "SRC", "AUTHOR", "RATE", "SCORE"
         );
-        assert_eq!(skill_list_title(0), expected_header);
+        assert_eq!(skill_list_title(0, widths), expected_header);
 
         // Column starts: name / scope / project / src / author / rate / score.
         let name_at = highlight_pad.len() + 4; // "[ ] "
@@ -1309,6 +1625,7 @@ mod tests {
 
     #[test]
     fn skill_list_rate_column_is_fixed_width() {
+        let widths = SkillListWidths::compact();
         assert_eq!(format_rate_column(Some(0.012)).len(), 6);
         assert_eq!(format_rate_column(None).len(), 6);
         let with_rate = format_skill_list_row(SkillListRow {
@@ -1320,6 +1637,7 @@ mod tests {
             author: "-",
             activation_rate: Some(0.012),
             delete_score: 10.0,
+            widths,
         });
         let without = format_skill_list_row(SkillListRow {
             mark: "[ ]",
@@ -1330,22 +1648,24 @@ mod tests {
             author: "-",
             activation_rate: None,
             delete_score: 10.0,
+            widths,
         });
         assert_eq!(with_rate.len(), without.len());
     }
 
     #[test]
     fn plugin_list_headers_align_with_row_columns() {
+        let widths = PluginListWidths::compact();
         let highlight_pad = " ".repeat(LIST_HIGHLIGHT.chars().count());
         let row = format!(
             "{highlight_pad}{}",
-            format_plugin_list_row("[ ]", "context7", "user", "cursor-public", 1, 1)
+            format_plugin_list_row("[ ]", "context7", "user", "cursor-public", 1, 1, widths)
         );
         let expected_header = format!(
             "{highlight_pad}{:<3} {:<16} {:7} {:<16} {:>2} {:>3} ",
             "", "NAME", "SCOPE", "MARKET", "SK", "MCP"
         );
-        assert_eq!(plugin_list_title(0), expected_header);
+        assert_eq!(plugin_list_title(0, widths), expected_header);
         let name_at = highlight_pad.len() + 4;
         assert_eq!(&row[name_at..name_at + 8], "context7");
         assert_eq!(&expected_header[name_at..name_at + 4], "NAME");
@@ -1353,16 +1673,17 @@ mod tests {
 
     #[test]
     fn mcp_list_headers_align_with_row_columns() {
+        let widths = McpListWidths::compact();
         let highlight_pad = " ".repeat(LIST_HIGHLIGHT.chars().count());
         let row = format!(
             "{highlight_pad}{}",
-            format_mcp_list_row("[ ]", "docs", "stdio", "context7", "claude-code")
+            format_mcp_list_row("[ ]", "docs", "stdio", "context7", "claude-code", widths)
         );
         let expected_header = format!(
-            "{highlight_pad}{:<3} {:<16} {:<6} {:<16} {} ",
+            "{highlight_pad}{:<3} {:<16} {:<6} {:<16} {:<18} ",
             "", "NAME", "TRANS", "PLUGIN", "AGENTS"
         );
-        assert_eq!(mcp_list_title(0), expected_header);
+        assert_eq!(mcp_list_title(0, widths), expected_header);
         let name_at = highlight_pad.len() + 4;
         assert_eq!(&row[name_at..name_at + 4], "docs");
         assert_eq!(&expected_header[name_at..name_at + 4], "NAME");

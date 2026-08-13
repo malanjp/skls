@@ -16,7 +16,7 @@
 ## できること
 
 - **一覧**: 27 エージェントホスト（Cursor が読む `~/.agents/skills` も含む）。Claude Code / Cursor / Codex / agents プラグインに同梱されたスキルもスキャン。project / user とエージェントでフィルタ、複数選択で一括操作
-- **サイドバー**: 左ナビで **manual**（プラグイン同梱スキルも含む）/ **gh** / **npx** / **plugins** / **mcp** に分割。`h`/`l`（または Tab）でフォーカス、サイドバー上の `j`/`k` でカテゴリ切替、`t` でも循環
+- **サイドバー**: 左ナビで **manual**（プラグイン同梱スキルも含む）/ **gh** / **npx** / **plugins** / **mcp**、続けてプロジェクトのスキャン対象（2 グループの間に仕切り）。`h`/`l`（または Tab）でフォーカス、サイドバー上の `j`/`k` でカテゴリ切替、`t` でも循環
 - **指標**: 会話ログから発動率を算出し、削除判断スコア（`delete_score`）を表示する
 - **追加**: スキルは `gh skill` / `npx skills`。プラグインは `claude plugin` / `copilot plugin` / `codex plugin`（Cursor にカタログ CLI は無い）
 - **削除**: インベントリ上のパスを削除（確認必須）。npx 由来は `npx skills remove` も実行。プラグイン削除はホストのカタログ CLI を先に使う。共有ストア / プラグイン内パスは警告
@@ -64,30 +64,35 @@ skls --dump-json                     # TUI なしで JSON 出力（{ skills, plu
 
 起動時はスキル一覧を先に出し、その後に発動率をサンプリング解析する。既定上限なら通常 1〜2 秒程度で一覧まで到達する。
 
-### プロジェクトディレクトリ
+### 設定ファイル
 
-`skls` は、現在のディレクトリ（または `--project-root`）に加えて、`~/.config/skls/config.toml`（`$XDG_CONFIG_HOME` が設定されている場合は `$XDG_CONFIG_HOME/skls/config.toml`）に列挙した追加フォルダを、プロジェクトスコープのスキャン対象として扱います。
+`~/.config/skls/config.toml`（`$XDG_CONFIG_HOME` があるときは `$XDG_CONFIG_HOME/skls/config.toml`）。追加フォルダは、カレントディレクトリ（または `--project-root`）に足すプロジェクトスコープのスキャン対象。ファイルが無いときは、ホーム直下の `repos` / `src` / `dev` / `code` / `work` / `projects` / `orca` / `Documents` / `Developer` / `ghq` / `git` だけを深さ 6 まで歩く（上限は訪問 4000・プロジェクト 80）。`.cursor/skills` / `.claude/skills` / `.agents/skills` / `.codex/skills` があるディレクトリを探し、見つかればその一覧で設定ファイルを作る。何も見つからなければファイルは作らない（次の起動で再試行できる）。すでにファイルがあるときは上書きしない。再発見したいときはファイルを消す。
 
 ```toml
 projects = [
   "~/src/my-app",
   "/abs/path/to/other-app",
 ]
+
+# 発動率解析の既定値（CLI フラグがあればそちらが優先）
+window_days = 30
+max_sessions = 80
+max_bytes = 262144
 ```
 
-現在のディレクトリ（または `--project-root`）がホームディレクトリの場合、そのパス自体はプロジェクトとしてスキャンしません。設定に列挙したパスは引き続きスキャンします。異なるプロジェクトに同名のスキルがある場合は別行として表示します。一覧の `PROJECT` 列にはプロジェクトディレクトリの名前が入り、ユーザースコープの行は `-` になります。
+相対パス・存在しないパス・ホーム自身は読み飛ばし、警告を出す。`~` はホームに展開する。カレントディレクトリ（または `--project-root`）がホームのときは、そのパス自体はプロジェクトとしてスキャンしない。設定の `projects` は引き続き読む。異なるプロジェクトの同名スキルは別行。一覧の `PROJECT` 列はディレクトリ名、ユーザースコープは `-`。
 
-プロジェクトスコープでの追加は、引き続きアクティブなルート（カレントディレクトリ / `--project-root`）だけを対象にします。ルートがホームの場合は、ユーザースコープを選ぶか `--project-root` を指定してください。
+プロジェクトスコープの追加は、サイドバーで選んだプロジェクトではなく cwd / `--project-root` に入れる。ルートがホームのときはユーザースコープを選ぶか `--project-root` を指定する。
 
 ## 画面
 
-左サイドバーでインベントリを分割する: **manual**（プラグイン同梱スキルも含む）· **gh** · **npx** · **plugins** · **mcp**。中央が一覧、右が詳細。`h`/`l`（または Tab）でサイドバーと一覧のフォーカスを切替。行頭の `[ ]` / `[x]` は複数選択。
+左サイドバーでインベントリを分割する: **manual**（プラグイン同梱スキルも含む）· **gh** · **npx** · **plugins** · **mcp**、灰色の仕切り、その下に設定 / cwd の**プロジェクト**（ディレクトリ名）。仕切りは見た目だけ（選択できない）。プロジェクトを選ぶと、そのルート配下にパスがあるスキルだけを出す。中央が一覧、右が詳細。`h`/`l`（または Tab）でサイドバーと一覧のフォーカスを切替。行頭の `[ ]` / `[x]` は複数選択。
 
-**スキル**の列は `NAME` · `SCOPE` · `PROJECT` · `SRC`（`plugin` / `gh skill` / `npx skills` / `manual`）· `AUTHOR` · `RATE` · `SCORE`。デフォルトソートは `delete_score` の降順（高いほど削除候補）。`S` で昇順/降順を切替。`s` でキーを変えるとそのキーの既定方向に戻る。作者は SKILL.md の frontmatter・プラグインマニフェスト・ソースリポジトリの GitHub owner から取得する。
+**スキル**の列は `NAME` · `SCOPE` · `PROJECT` · `SRC`（`plugin` / `gh skill` / `npx skills` / `manual`）· `AUTHOR` · `RATE` · `SCORE`。`NAME` / `PROJECT` / `SRC` / `AUTHOR` は表示中の最長値に合わせて伸び、余った幅は `NAME` に足す。`SCOPE` / `RATE` / `SCORE` は固定。デフォルトソートは `delete_score` の降順（高いほど削除候補）。`S` で昇順/降順を切替。`s` でキーを変えるとそのキーの既定方向に戻る。作者は SKILL.md の frontmatter・プラグインマニフェスト・ソースリポジトリの GitHub owner から取得する。
 
-**プラグイン**の列は `NAME` · `SCOPE` · `MARKET` · `SK`（同梱スキル数）· `MCP`。
+**プラグイン**の列は `NAME` · `SCOPE` · `MARKET` · `SK`（同梱スキル数）· `MCP`。`NAME` / `MARKET` も同じ規則で伸びる。
 
-**MCP**の列は `NAME` · `TRANS`（`stdio` / `http` / `sse`）· `PLUGIN` · `AGENTS`。プラグインの `mcp.json` / `.mcp.json` を読む（Agent Plugins 1.0、および `command` / `url` だけの緩め形式）。
+**MCP**の列は `NAME` · `TRANS`（`stdio` / `http` / `sse`）· `PLUGIN` · `AGENTS`。`NAME` / `PLUGIN` / `AGENTS` も同じ規則で伸びる。プラグインの `mcp.json` / `.mcp.json` を読む（Agent Plugins 1.0、および `command` / `url` だけの緩め形式）。
 
 タイトルの `sample:` は発動率解析の上限、ステータスの `sampled (-N older)` はスキップした古いセッション数を示す。
 
@@ -101,7 +106,7 @@ projects = [
 | `Ctrl+B` / `PgUp` | 前ページ（端で止まる。一覧） |
 | `gg` / `Home` | 先頭行（一覧）/ 先頭ナビ（サイドバー） |
 | `L` / `Ctrl+L` / `End` | 末尾行（一覧）/ 末尾ナビ（サイドバー） |
-| `t` | サイドバー循環（manual → gh → npx → plugins → mcp） |
+| `t` | サイドバー循環（manual → gh → npx → plugins → mcp → プロジェクト） |
 | `Space` | 行の選択トグル |
 | `*` | 表示中を全選択 / 全解除 |
 | `x` | 選択クリア |

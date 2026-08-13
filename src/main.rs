@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
-use clap::Parser;
+use clap::parser::ValueSource;
+use clap::{CommandFactory, FromArgMatches, Parser};
 use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -10,6 +11,7 @@ use ratatui::backend::CrosstermBackend;
 use skls::adapters::command::SystemCommandRunner;
 use skls::analytics::AnalyzeLimits;
 use skls::app::{App, PendingAction};
+use skls::config::LoadedConfig;
 use skls::executor;
 use skls::ui::draw;
 use std::io::{self, stdout};
@@ -45,28 +47,17 @@ struct Cli {
 }
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
-    let project_root = match cli.project_root {
+    let matches = Cli::command().get_matches();
+    let cli = Cli::from_arg_matches(&matches).context("cli")?;
+    let project_root = match cli.project_root.clone() {
         Some(p) => p,
         None => std::env::current_dir().context("current_dir")?,
     };
     let home = dirs_home().context("HOME not set")?;
 
     let loaded = skls::config::load_config(&skls::config::default_config_path(&home), &home);
-    let scan_roots = skls::config::resolve_scan_roots(&loaded.projects, &project_root, &home);
     let mut app = App::new(project_root, home);
-    app.scan_roots = scan_roots;
-    app.config_project_count = loaded.projects.len();
-    app.config_warnings.extend(loaded.warnings);
-    app.window_days = cli.window_days;
-    app.analyze_limits = if cli.full_scan {
-        AnalyzeLimits::unlimited()
-    } else {
-        AnalyzeLimits {
-            max_files_per_agent: cli.max_sessions,
-            max_bytes_per_file: cli.max_bytes,
-        }
-    };
+    apply_config(&mut app, &loaded, &cli, &matches);
 
     if cli.dump_json {
         // JSON dump needs stats in one shot.
@@ -125,6 +116,41 @@ fn run_pending_action(
         terminal.draw(|f| draw(f, app))?;
         Ok(())
     })
+}
+
+fn apply_config(app: &mut App, loaded: &LoadedConfig, cli: &Cli, matches: &clap::ArgMatches) {
+    app.scan_roots =
+        skls::config::resolve_scan_roots(&loaded.projects, &app.project_root, &app.home);
+    app.config_project_count = loaded.projects.len();
+    app.config_warnings.extend(loaded.warnings.iter().cloned());
+
+    app.window_days = pick_value(matches, "window_days", loaded.window_days, cli.window_days);
+    if cli.full_scan {
+        app.analyze_limits = AnalyzeLimits::unlimited();
+    } else {
+        app.analyze_limits = AnalyzeLimits {
+            max_files_per_agent: pick_value(
+                matches,
+                "max_sessions",
+                loaded.max_sessions,
+                cli.max_sessions,
+            ),
+            max_bytes_per_file: pick_value(matches, "max_bytes", loaded.max_bytes, cli.max_bytes),
+        };
+    }
+}
+
+fn pick_value<T: Copy>(
+    matches: &clap::ArgMatches,
+    id: &str,
+    from_config: Option<T>,
+    from_cli: T,
+) -> T {
+    if matches.value_source(id) == Some(ValueSource::CommandLine) {
+        from_cli
+    } else {
+        from_config.unwrap_or(from_cli)
+    }
 }
 
 fn dirs_home() -> Option<PathBuf> {

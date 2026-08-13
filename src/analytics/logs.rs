@@ -3,6 +3,7 @@
 use crate::model::{Agent, SkillRecord, normalize_skill_id};
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
+use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Read;
@@ -176,7 +177,7 @@ fn scan_agent_files(
         }
         dated.push((modified, path));
     }
-    dated.sort_by(|a, b| b.0.cmp(&a.0));
+    dated.sort_by_key(|b| Reverse(b.0));
     if dated.len() > limits.max_files_per_agent {
         index.truncated_files += (dated.len() - limits.max_files_per_agent) as u64;
         dated.truncate(limits.max_files_per_agent);
@@ -214,13 +215,13 @@ fn collect_cursor_jsonl(root: &Path) -> Vec<PathBuf> {
                 out.push(path);
                 continue;
             }
-            if path.is_dir() {
-                if let Ok(nested) = fs::read_dir(&path) {
-                    for n in nested.flatten() {
-                        let npath = n.path();
-                        if npath.extension().and_then(|e| e.to_str()) == Some("jsonl") {
-                            out.push(npath);
-                        }
+            if path.is_dir()
+                && let Ok(nested) = fs::read_dir(&path)
+            {
+                for n in nested.flatten() {
+                    let npath = n.path();
+                    if npath.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+                        out.push(npath);
                     }
                 }
             }

@@ -246,16 +246,16 @@ pub fn skill_roots(
     roots
 }
 
-pub fn parse_skill_md(
-    content: &str,
-) -> Result<(
+type ParsedSkillMd = (
     String,
     String,
     Option<String>,
     Option<String>,
     Option<String>,
     bool,
-)> {
+);
+
+pub fn parse_skill_md(content: &str) -> Result<ParsedSkillMd> {
     let fm = extract_frontmatter(content)?;
     let name = fm.name.clone().unwrap_or_else(|| "unnamed".to_string());
     let description = fm.description.unwrap_or_default();
@@ -712,7 +712,7 @@ metadata:
             "---\nname: foo\ndescription: d\n---\n",
         )
         .unwrap();
-        let (found, _) = scan_skills(&[proj.clone()], &home).unwrap();
+        let (found, _) = scan_skills(std::slice::from_ref(&proj), &home).unwrap();
         let foo = found.iter().find(|s| s.name == "foo").unwrap();
         assert_eq!(foo.location.scope, Scope::Project);
         assert_eq!(foo.project.as_ref(), Some(&proj));

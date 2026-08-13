@@ -1,6 +1,8 @@
 //! Plugin packages and MCP servers shown alongside skills.
 
+use crate::config::path_is_under;
 use crate::model::{Agent, InstallSource, Scope, SkillLocation, SkillRecord, agents_label};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListView {
@@ -98,6 +100,56 @@ impl NavItem {
             NavItem::Plugins | NavItem::Mcp => false,
         }
     }
+}
+
+/// One row in the left sidebar: a source category or a scan-root project.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SidebarSel {
+    Source(NavItem),
+    Project(usize),
+}
+
+impl SidebarSel {
+    pub fn list_view(&self) -> ListView {
+        match self {
+            SidebarSel::Source(item) => item.list_view(),
+            SidebarSel::Project(_) => ListView::Skills,
+        }
+    }
+
+    pub fn matches_skill(&self, skill: &SkillRecord, scan_roots: &[PathBuf]) -> bool {
+        match self {
+            SidebarSel::Source(item) => item.matches_skill(skill),
+            SidebarSel::Project(i) => scan_roots
+                .get(*i)
+                .is_some_and(|root| skill_in_project(skill, root)),
+        }
+    }
+}
+
+pub fn skill_in_project(skill: &SkillRecord, root: &Path) -> bool {
+    if skill
+        .project
+        .as_ref()
+        .is_some_and(|p| p == root || path_is_under(p, root))
+    {
+        return true;
+    }
+    skill.locations.iter().any(|loc| {
+        path_is_under(&loc.path, root)
+            || loc
+                .resolved
+                .as_deref()
+                .is_some_and(|p| path_is_under(p, root))
+    })
+}
+
+pub fn project_dir_label(root: &Path) -> String {
+    root.file_name()
+        .and_then(|n| n.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("-")
+        .to_string()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

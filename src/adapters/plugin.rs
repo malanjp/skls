@@ -239,6 +239,7 @@ fn is_plugin_root(dir: &Path) -> bool {
         || dir.join(".codex-plugin").is_dir()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn ingest_plugin_dir(
     plugin_dir: &Path,
     agent: Agent,

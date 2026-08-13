@@ -23,9 +23,10 @@ TUI でエージェントスキルを横断管理する。一覧（スキル / �
 src/
   main.rs          CLI・イベントループ・pending action
   lib.rs           モジュール公開
-  app.rs           TUI 状態機械・キーバインド（左ナビ: manual / gh / npx / plugins / mcp）
+  app.rs           TUI 状態機械・キーバインド（左ナビ: manual / gh / npx / plugins / mcp + プロジェクト）
+  config.rs        ~/.config/skls/config.toml（projects + 解析既定 + 欠落時の発見）
   model/skill.rs   Agent / Scope / SkillRecord / SkillFilters
-  model/catalog.rs NavItem / ListView / PluginRecord / McpServerRecord / PluginBackend
+  model/catalog.rs NavItem / ListView / SidebarSel / PluginRecord / McpServerRecord / PluginBackend
   inventory/       FS 発見 + gh / skill-lock のマージ
   adapters/
     fs.rs          skill_roots・SKILL.md スキャン
@@ -56,7 +57,9 @@ src/
 - 追加の初期選択は `Agent::primary()`（cursor / claude-code / codex）。`*` で全ホスト。
 - 削除: インベントリのパスを先に消す。`source == npx` かつ `npx` 利用可なら、その後必ず `npx skills remove`（early return しない）。
 - 更新: エージェント選択 → backend（gh / npx）。推定 backend は provenance / lock から。
-- 左サイドバー: `manual`（InstallSource::Manual + plugin 同梱スキル）/ `gh` / `npx` / `plugins` / `mcp`。`h`/`l`（または Tab）でフォーカス、`j`/`k` でナビ移動、`t` で循環。スキル一覧のキーバインドは壊さない。
+- 左サイドバー: `manual`（InstallSource::Manual + plugin 同梱スキル）/ `gh` / `npx` / `plugins` / `mcp`、続けて `scan_roots` のプロジェクト行。出所とプロジェクトの間の仕切りは描画だけ（選択不可）。`h`/`l`（または Tab）でフォーカス、`j`/`k` でナビ移動、`t` で循環。プロジェクト選択はパス前方一致（および `SkillRecord.project`）でスキルを絞る。追加・更新のプロジェクトスコープは `project_root`（cwd / `--project-root`）であり、サイドバー選択ではない。スキル一覧のキーバインドは壊さない。
+- ユーザー設定は `~/.config/skls/config.toml`（`$XDG_CONFIG_HOME/skls/config.toml`）。無いときはホーム直下の `repos` / `src` / `dev` / `code` / `work` / `projects` / `orca` / `Documents` / `Developer` / `ghq` / `git` だけからプロジェクトを発見してファイルを生成する（ホーム全体は歩かない。深さ 6・訪問 4000・プロジェクト 80）。何も無ければファイルは作らない。壊れているときは空＋警告で続行。既存ファイルは上書きしない。`projects` は追加のプロジェクトスコープルート。解析キーは CLI 未指定時だけ使う。
+- 一覧の可変列（スキルの NAME/PROJECT/SRC/AUTHOR、プラグインの NAME/MARKET、MCP の NAME/PLUGIN/AGENTS）は表示内容に合わせて伸ばし、余りは先頭列へ。`compact()` はテスト専用（`#[cfg(test)]`）。
 - プラグイン追加の初期選択は `plugin_cli_agents()`（claude-code / copilot / codex）。Cursor はカタログ CLI なし（marketplace から入れて、とメッセージ）。
 - プラグイン削除: カタログ CLI が成功したらパスは消さない。全部失敗したときだけ `remove_skill_path`。
 - MCP の追加・更新は plugins ナビへ誘導。削除は親プラグインのアンインストール確認。
@@ -89,6 +92,6 @@ cargo test --lib
 ## Cursor Cloud specific instructions
 
 - **toolchain**: edition 2024 のため Rust 1.85+ が必須。Cloud VM の既定 `rustc` は古い場合があり、update script が `rustup default stable` を設定する。個別セッションでツールチェインを固定したいときは `rustup override set stable` を使う。
-- **lint/test/build/run**: 標準コマンドは `README.md`「Development」節と本ファイル「テスト」節を参照（`cargo clippy` / `cargo fmt --check` / `cargo test --lib` / `cargo build`）。`cargo clippy` は既存コードに warning（`collapsible_if` 等）が出るが error ではない。`cargo fmt --check` はクリーン。
+- **lint/test/build/run**: 標準コマンドは `README.md`「Development」節と本ファイル「テスト」節を参照（`cargo clippy --all-targets -- -D warnings` / `cargo fmt --check` / `cargo test --lib` / `cargo build`）。`cargo fmt --check` はクリーン。
 - **TUI の実行**: `skls` は全画面 TUI なので描画確認には実ターミナル（Desktop / computer use）が必要。ヘッドレスな検証には `cargo run -- --dump-json`（TUI を出さず在庫を JSON 出力）が使える。
 - **スキャン対象**: skls は実行ユーザーの HOME 配下スキルディレクトリを読む。Cloud VM は `~/.cursor/plugins/cache/**/skills/` にプラグインスキルが多数あり、`--dump-json` は実データ（`source: plugin`）を返す。テストで実 HOME のスキルツリーを壊さないこと。

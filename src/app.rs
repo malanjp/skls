@@ -7,8 +7,8 @@ use crate::analytics::{
 };
 use crate::inventory::{InventoryOptions, build_inventory};
 use crate::model::{
-    Agent, InstallSource, ListView, McpServerRecord, NavItem, PluginRecord, Scope, SkillFilters,
-    SkillKey, SkillRecord, SortDir, SortKey, plugin_cli_agents,
+    Agent, InstallSource, ListView, McpServerRecord, NavItem, PluginRecord, Scope, SidebarSel,
+    SkillFilters, SkillKey, SkillRecord, SortDir, SortKey, plugin_cli_agents, project_dir_label,
 };
 use crate::ops::{
     AddBackend, DeletePlan, PluginDeletePlan, UpdateJob, plan_delete, plan_plugin_delete,
@@ -74,14 +74,18 @@ pub struct App {
     pub scan_roots: Vec<PathBuf>,
     /// Number of projects listed in config (status `projects:N` uses scan_roots.len()).
     pub config_project_count: usize,
+    /// Cached sidebar counts for `scan_roots` (rebuilt in `recompute_view`).
+    project_nav_counts: Vec<usize>,
     /// Config/resolve warnings kept across inventory reloads.
     pub config_warnings: Vec<String>,
     pub skills: Vec<SkillRecord>,
     pub plugins: Vec<PluginRecord>,
     pub mcp_servers: Vec<McpServerRecord>,
     pub list_view: ListView,
-    /// Left-sidebar category (manual / gh / npx / plugins / mcp).
+    /// Last source category (manual / gh / npx / plugins / mcp).
     pub nav: NavItem,
+    /// Current left-sidebar row (source category or a scan-root project).
+    pub sidebar_sel: SidebarSel,
     /// Which pane receives j/k: sidebar vs the item list.
     pub focus: FocusPane,
     pub filtered_indices: Vec<usize>,
@@ -163,12 +167,14 @@ impl App {
             home,
             scan_roots: Vec::new(),
             config_project_count: 0,
+            project_nav_counts: Vec::new(),
             config_warnings: Vec::new(),
             skills: Vec::new(),
             plugins: Vec::new(),
             mcp_servers: Vec::new(),
             list_view: ListView::Skills,
             nav: NavItem::Manual,
+            sidebar_sel: SidebarSel::Source(NavItem::Manual),
             focus: FocusPane::List,
             filtered_indices: Vec::new(),
             selected: 0,
@@ -608,14 +614,18 @@ impl App {
     }
 
     pub fn recompute_view(&mut self) {
-        self.list_view = self.nav.list_view();
-        self.sidebar_state.select(Some(self.nav.index()));
+        self.clamp_sidebar_sel();
+        self.list_view = self.sidebar_sel.list_view();
+        self.sidebar_state
+            .select(Some(self.sidebar_display_index()));
         let mut idxs: Vec<usize> = match self.list_view {
             ListView::Skills => self
                 .skills
                 .iter()
                 .enumerate()
-                .filter(|(_, s)| self.nav.matches_skill(s) && self.filters.matches(s))
+                .filter(|(_, s)| {
+                    self.sidebar_sel.matches_skill(s, &self.scan_roots) && self.filters.matches(s)
+                })
                 .map(|(i, _)| i)
                 .collect(),
             ListView::Plugins => self
@@ -672,6 +682,9 @@ impl App {
         if self.selected >= self.filtered_indices.len() {
             self.selected = self.filtered_indices.len().saturating_sub(1);
         }
+        self.project_nav_counts = (0..self.scan_roots.len())
+            .map(|i| self.project_nav_count(i))
+            .collect();
         self.sync_list_state();
     }
 
@@ -762,9 +775,93 @@ impl App {
 
     /// Header / status sort label. Plugins and MCP are always name ascending.
     pub fn displayed_sort(&self) -> (SortKey, SortDir) {
-        match self.nav.list_view() {
+        match self.list_view {
             ListView::Skills => (self.sort_key, self.sort_dir),
             ListView::Plugins | ListView::Mcp => (SortKey::Name, SortDir::Asc),
+        }
+    }
+
+    pub fn sidebar_entries(&self) -> Vec<SidebarSel> {
+        let mut entries: Vec<SidebarSel> = NavItem::ALL
+            .iter()
+            .copied()
+            .map(SidebarSel::Source)
+            .collect();
+        for i in 0..self.scan_roots.len() {
+            entries.push(SidebarSel::Project(i));
+        }
+        entries
+    }
+
+    pub fn sidebar_index(&self) -> usize {
+        match self.sidebar_sel {
+            SidebarSel::Source(item) => item.index(),
+            SidebarSel::Project(i) => {
+                NavItem::ALL.len() + i.min(self.scan_roots.len().saturating_sub(1))
+            }
+        }
+    }
+
+    /// List widget index. Inserts a gap after source rows when projects exist.
+    pub fn sidebar_display_index(&self) -> usize {
+        let i = self.sidebar_index();
+        if matches!(self.sidebar_sel, SidebarSel::Project(_)) && !self.scan_roots.is_empty() {
+            i + 1
+        } else {
+            i
+        }
+    }
+
+    pub fn sidebar_has_project_divider(&self) -> bool {
+        !self.scan_roots.is_empty()
+    }
+
+    pub fn view_label(&self) -> String {
+        match &self.sidebar_sel {
+            SidebarSel::Source(item) => item.as_str().to_string(),
+            SidebarSel::Project(i) => self
+                .scan_roots
+                .get(*i)
+                .map(|p| project_dir_label(p))
+                .unwrap_or_else(|| "-".into()),
+        }
+    }
+
+    pub fn sidebar_row_label(&self, sel: &SidebarSel) -> String {
+        match sel {
+            SidebarSel::Source(item) => item.label().to_string(),
+            SidebarSel::Project(i) => self
+                .scan_roots
+                .get(*i)
+                .map(|p| project_dir_label(p))
+                .unwrap_or_else(|| "-".into()),
+        }
+    }
+
+    pub fn sidebar_row_count(&self, sel: &SidebarSel) -> usize {
+        match sel {
+            SidebarSel::Source(item) => self.nav_count(*item),
+            SidebarSel::Project(i) => self.project_nav_counts.get(*i).copied().unwrap_or(0),
+        }
+    }
+
+    fn project_nav_count(&self, index: usize) -> usize {
+        let Some(root) = self.scan_roots.get(index) else {
+            return 0;
+        };
+        self.skills
+            .iter()
+            .filter(|s| crate::model::skill_in_project(s, root) && self.filters.matches(s))
+            .count()
+    }
+
+    fn clamp_sidebar_sel(&mut self) {
+        if let SidebarSel::Project(i) = self.sidebar_sel {
+            if self.scan_roots.is_empty() {
+                self.sidebar_sel = SidebarSel::Source(self.nav);
+            } else if i >= self.scan_roots.len() {
+                self.sidebar_sel = SidebarSel::Project(self.scan_roots.len() - 1);
+            }
         }
     }
 
@@ -789,21 +886,32 @@ impl App {
     }
 
     pub fn apply_nav(&mut self, nav: NavItem) {
-        self.nav = nav;
-        self.list_view = nav.list_view();
+        self.apply_sidebar(SidebarSel::Source(nav));
+    }
+
+    fn apply_sidebar(&mut self, sel: SidebarSel) {
+        if let SidebarSel::Source(nav) = sel {
+            self.nav = nav;
+        }
+        self.sidebar_sel = sel;
+        self.list_view = self.sidebar_sel.list_view();
         self.selected = 0;
         self.recompute_view();
-        self.status = format!("view: {}", nav.as_str());
+        self.status = format!("view: {}", self.view_label());
     }
 
     fn move_nav(&mut self, dir: i32) {
-        let len = NavItem::ALL.len() as i32;
-        let next = (self.nav.index() as i32 + dir).rem_euclid(len) as usize;
-        self.apply_nav(NavItem::from_index(next));
+        let entries = self.sidebar_entries();
+        let len = entries.len() as i32;
+        if len == 0 {
+            return;
+        }
+        let next = (self.sidebar_index() as i32 + dir).rem_euclid(len) as usize;
+        self.apply_sidebar(entries[next].clone());
     }
 
     fn cycle_nav(&mut self) {
-        self.apply_nav(self.nav.next());
+        self.move_nav(1);
     }
 
     pub fn sync_list_state(&mut self) {
@@ -975,21 +1083,17 @@ impl App {
             KeyCode::Char('h') | KeyCode::Left => {
                 self.focus = FocusPane::Sidebar;
             }
-            KeyCode::Char('j') | KeyCode::Down => {
-                if !self.filtered_indices.is_empty() {
-                    self.selected = (self.selected + 1) % self.filtered_indices.len();
-                    self.sync_list_state();
-                }
+            KeyCode::Char('j') | KeyCode::Down if !self.filtered_indices.is_empty() => {
+                self.selected = (self.selected + 1) % self.filtered_indices.len();
+                self.sync_list_state();
             }
-            KeyCode::Char('k') | KeyCode::Up => {
-                if !self.filtered_indices.is_empty() {
-                    self.selected = if self.selected == 0 {
-                        self.filtered_indices.len() - 1
-                    } else {
-                        self.selected - 1
-                    };
-                    self.sync_list_state();
-                }
+            KeyCode::Char('k') | KeyCode::Up if !self.filtered_indices.is_empty() => {
+                self.selected = if self.selected == 0 {
+                    self.filtered_indices.len() - 1
+                } else {
+                    self.selected - 1
+                };
+                self.sync_list_state();
             }
             KeyCode::PageDown => self.page_list(1),
             KeyCode::PageUp => self.page_list(-1),
@@ -1054,8 +1158,16 @@ impl App {
                 self.focus = FocusPane::List;
             }
             KeyCode::Char('h') | KeyCode::Left => {}
-            KeyCode::Home => self.apply_nav(NavItem::Manual),
-            KeyCode::End | KeyCode::Char('L') => self.apply_nav(NavItem::Mcp),
+            KeyCode::Home => {
+                if let Some(first) = self.sidebar_entries().first() {
+                    self.apply_sidebar(first.clone());
+                }
+            }
+            KeyCode::End | KeyCode::Char('L') => {
+                if let Some(last) = self.sidebar_entries().last() {
+                    self.apply_sidebar(last.clone());
+                }
+            }
             KeyCode::Char('/') => {
                 self.mode = Mode::Search;
                 self.input = self.filters.query.clone();
@@ -1203,14 +1315,14 @@ impl App {
             }
             ListView::Skills => {
                 self.add_plugin = false;
-                match self.nav {
-                    NavItem::Gh if self.gh_available => {
+                match self.sidebar_sel {
+                    SidebarSel::Source(NavItem::Gh) if self.gh_available => {
                         self.add_backend = AddBackend::GhSkill;
                         self.mode = Mode::AddQuery;
                         self.input.clear();
                         self.status = "gh skill: search keywords".into();
                     }
-                    NavItem::Npx if self.npx_available => {
+                    SidebarSel::Source(NavItem::Npx) if self.npx_available => {
                         self.add_backend = AddBackend::NpxSkills;
                         self.mode = Mode::AddQuery;
                         self.input.clear();
@@ -1346,21 +1458,17 @@ impl App {
                 self.mode = Mode::AddQuery;
                 self.input = self.add_query.clone();
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if !self.add_results.is_empty() {
-                    self.add_result_idx = (self.add_result_idx + 1) % self.add_results.len();
-                    self.add_list_state.select(Some(self.add_result_idx));
-                }
+            KeyCode::Down | KeyCode::Char('j') if !self.add_results.is_empty() => {
+                self.add_result_idx = (self.add_result_idx + 1) % self.add_results.len();
+                self.add_list_state.select(Some(self.add_result_idx));
             }
-            KeyCode::Up | KeyCode::Char('k') => {
-                if !self.add_results.is_empty() {
-                    self.add_result_idx = if self.add_result_idx == 0 {
-                        self.add_results.len() - 1
-                    } else {
-                        self.add_result_idx - 1
-                    };
-                    self.add_list_state.select(Some(self.add_result_idx));
-                }
+            KeyCode::Up | KeyCode::Char('k') if !self.add_results.is_empty() => {
+                self.add_result_idx = if self.add_result_idx == 0 {
+                    self.add_results.len() - 1
+                } else {
+                    self.add_result_idx - 1
+                };
+                self.add_list_state.select(Some(self.add_result_idx));
             }
             KeyCode::Enter => {
                 if let Some(item) = self.add_results.get(self.add_result_idx) {
@@ -2000,7 +2108,7 @@ fn union_plugin_agents<'a>(plugins: impl Iterator<Item = &'a PluginRecord>) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{InstallKind, InstallSource, NavItem, SkillStats};
+    use crate::model::{InstallKind, InstallSource, NavItem, SkillLocation, SkillStats};
 
     fn sample_app() -> App {
         let mut app = App::new("/tmp/proj".into(), "/tmp/home".into());
@@ -2527,7 +2635,65 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE))
             .unwrap();
         assert_eq!(app.nav, NavItem::Manual);
+        assert_eq!(app.sidebar_sel, SidebarSel::Source(NavItem::Manual));
         assert_eq!(app.list_view, ListView::Skills);
+    }
+
+    #[test]
+    fn project_sidebar_filters_skills_by_path() {
+        let mut app = sample_app();
+        let proj = std::path::PathBuf::from("/tmp/proj");
+        let other = std::path::PathBuf::from("/tmp/other-app");
+        app.scan_roots = vec![proj.clone(), other.clone()];
+        app.skills[0].locations = vec![SkillLocation {
+            agent: Agent::Cursor,
+            scope: Scope::Project,
+            path: proj.join(".cursor/skills/alpha"),
+            kind: InstallKind::Copy,
+            resolved: None,
+        }];
+        app.skills[1].locations = vec![SkillLocation {
+            agent: Agent::Codex,
+            scope: Scope::Project,
+            path: other.join(".cursor/skills/beta"),
+            kind: InstallKind::Copy,
+            resolved: None,
+        }];
+        app.apply_sidebar(SidebarSel::Project(0));
+        let names: Vec<&str> = app
+            .filtered_indices
+            .iter()
+            .map(|&i| app.skills[i].name.as_str())
+            .collect();
+        assert_eq!(names, vec!["alpha"]);
+        assert_eq!(app.view_label(), "proj");
+        app.apply_sidebar(SidebarSel::Project(1));
+        let names: Vec<&str> = app
+            .filtered_indices
+            .iter()
+            .map(|&i| app.skills[i].name.as_str())
+            .collect();
+        assert_eq!(names, vec!["beta"]);
+        assert_eq!(app.sidebar_row_count(&SidebarSel::Project(0)), 1);
+        assert_eq!(app.sidebar_row_count(&SidebarSel::Project(1)), 1);
+        assert!(app.sidebar_has_project_divider());
+        assert_eq!(app.sidebar_index(), NavItem::ALL.len() + 1);
+        assert_eq!(app.sidebar_display_index(), app.sidebar_index() + 1);
+    }
+
+    #[test]
+    fn t_cycles_into_project_rows_when_scan_roots_exist() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = sample_app();
+        app.scan_roots = vec![std::path::PathBuf::from("/tmp/proj")];
+        app.apply_nav(NavItem::Mcp);
+        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.sidebar_sel, SidebarSel::Project(0));
+        assert_eq!(app.list_view, ListView::Skills);
+        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.sidebar_sel, SidebarSel::Source(NavItem::Manual));
     }
 
     #[test]
