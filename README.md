@@ -68,7 +68,7 @@ On startup the skill list appears first, then activation is sampled. With defaul
 
 `t` cycles the list: **skills → plugins → MCP**. List on the left, detail on the right. `[ ]` / `[x]` mark multi-select.
 
-**Skills** columns: `NAME` · `SCOPE` · `SRC` (`plugin` / `gh skill` / `npx skills` / `manual`) · `AUTHOR` · `RATE` · `SCORE`. Default sort is `delete_score` (higher = stronger delete candidate). Author comes from the SKILL.md frontmatter, the plugin manifest, or the GitHub owner of the source repo.
+**Skills** columns: `NAME` · `SCOPE` · `SRC` (`plugin` / `gh skill` / `npx skills` / `manual`) · `AUTHOR` · `RATE` · `SCORE`. Default sort is `delete_score` descending (higher = stronger delete candidate). `S` toggles asc/desc; cycling with `s` resets to that key's default direction. Author comes from the SKILL.md frontmatter, the plugin manifest, or the GitHub owner of the source repo.
 
 **Plugins** columns: `NAME` · `SCOPE` · `MARKET` · `SK` (bundled skills) · `MCP`.
 
@@ -81,13 +81,16 @@ On startup the skill list appears first, then activation is sampled. With defaul
 | Key | Action |
 |-----|--------|
 | `j` / `k` | Move |
+| `Ctrl+F` / `PgDn` | Page down (no wrap) |
+| `Ctrl+B` / `PgUp` | Page up (no wrap) |
 | `t` | Cycle view (skills → plugins → mcp) |
 | `Space` | Toggle row selection |
 | `*` | Select / clear all visible |
 | `x` | Clear selection |
 | `/` | Search name / description |
 | `f` | Filter panel |
-| `s` | Cycle sort (`name` → `rate` → `delete_score` → `last_hit` → `author` → `source`) |
+| `s` | Cycle sort key (`name` → `rate` → `delete_score` → `last_hit` → `author` → `source`); resets direction to that key's default |
+| `S` | Toggle sort direction (asc / desc) |
 | `a` | Add flow (skills: `gh`/`npx`; plugins: catalog CLI) |
 | `d` | Delete confirm (selection if any, else current row) |
 | `u` | Update |

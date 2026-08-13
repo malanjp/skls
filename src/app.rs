@@ -8,7 +8,7 @@ use crate::analytics::{
 use crate::inventory::{InventoryOptions, build_inventory};
 use crate::model::{
     Agent, InstallSource, ListView, McpServerRecord, PluginRecord, Scope, SkillFilters, SkillKey,
-    SkillRecord, SortKey, plugin_cli_agents,
+    SkillRecord, SortDir, SortKey, plugin_cli_agents,
 };
 use crate::ops::{
     AddBackend, DeletePlan, PluginDeletePlan, UpdateJob, plan_delete, plan_plugin_delete,
@@ -81,6 +81,9 @@ pub struct App {
     pub add_list_state: ListState,
     pub filters: SkillFilters,
     pub sort_key: SortKey,
+    pub sort_dir: SortDir,
+    /// Visible list rows (inner height). Used by Ctrl+F / Ctrl+B paging.
+    pub list_page_rows: usize,
     pub mode: Mode,
     pub input: String,
     pub status: String,
@@ -153,6 +156,8 @@ impl App {
             add_list_state: ListState::default(),
             filters: SkillFilters::default(),
             sort_key: SortKey::Score,
+            sort_dir: SortDir::Desc,
+            list_page_rows: 20,
             mode: Mode::List,
             input: String::new(),
             status: "loading...".into(),
@@ -591,32 +596,39 @@ impl App {
                 idxs.sort_by(|&a, &b| {
                     let sa = &self.skills[a];
                     let sb = &self.skills[b];
-                    match self.sort_key {
+                    let asc = match self.sort_key {
                         SortKey::Name => sa.name.cmp(&sb.name),
                         SortKey::Rate => {
                             let ra = sa.stats.activation_rate.unwrap_or(-1.0);
                             let rb = sb.stats.activation_rate.unwrap_or(-1.0);
-                            rb.partial_cmp(&ra).unwrap_or(std::cmp::Ordering::Equal)
+                            ra.partial_cmp(&rb).unwrap_or(std::cmp::Ordering::Equal)
                         }
-                        SortKey::Score => sb
+                        SortKey::Score => sa
                             .stats
                             .delete_score
-                            .partial_cmp(&sa.stats.delete_score)
+                            .partial_cmp(&sb.stats.delete_score)
                             .unwrap_or(std::cmp::Ordering::Equal),
-                        SortKey::LastHit => sb.stats.last_hit_at.cmp(&sa.stats.last_hit_at),
+                        SortKey::LastHit => sa.stats.last_hit_at.cmp(&sb.stats.last_hit_at),
                         SortKey::Author => Self::opt_cmp(&sa.author, &sb.author)
                             .then_with(|| sa.name.cmp(&sb.name)),
                         SortKey::Source => Self::source_rank(sa.source)
                             .cmp(&Self::source_rank(sb.source))
                             .then_with(|| sa.name.cmp(&sb.name)),
-                    }
+                    };
+                    self.apply_sort_dir(asc)
                 });
             }
             ListView::Plugins => {
-                idxs.sort_by(|&a, &b| self.plugins[a].name.cmp(&self.plugins[b].name));
+                idxs.sort_by(|&a, &b| {
+                    self.apply_name_list_dir(self.plugins[a].name.cmp(&self.plugins[b].name))
+                });
             }
             ListView::Mcp => {
-                idxs.sort_by(|&a, &b| self.mcp_servers[a].name.cmp(&self.mcp_servers[b].name));
+                idxs.sort_by(|&a, &b| {
+                    self.apply_name_list_dir(
+                        self.mcp_servers[a].name.cmp(&self.mcp_servers[b].name),
+                    )
+                });
             }
         }
 
@@ -702,12 +714,64 @@ impl App {
         }
     }
 
+    fn apply_sort_dir(&self, asc: std::cmp::Ordering) -> std::cmp::Ordering {
+        match self.sort_dir {
+            SortDir::Asc => asc,
+            SortDir::Desc => asc.reverse(),
+        }
+    }
+
+    /// Plugins / MCP are name lists. Score/rate default to Desc; invert so they stay A–Z
+    /// until the user picks a name-like key or toggles direction.
+    fn apply_name_list_dir(&self, asc: std::cmp::Ordering) -> std::cmp::Ordering {
+        match self.sort_key {
+            SortKey::Rate | SortKey::Score | SortKey::LastHit => self.apply_sort_dir(asc).reverse(),
+            SortKey::Name | SortKey::Author | SortKey::Source => self.apply_sort_dir(asc),
+        }
+    }
+
     pub fn sync_list_state(&mut self) {
         if self.filtered_indices.is_empty() {
             self.list_state.select(None);
         } else {
             self.list_state.select(Some(self.selected));
         }
+    }
+
+    fn page_list(&mut self, dir: i32) {
+        let len = self.filtered_indices.len();
+        if len == 0 {
+            return;
+        }
+        let step = self.list_page_rows.saturating_sub(1).max(1);
+        let next = if dir > 0 {
+            self.selected.saturating_add(step).min(len - 1)
+        } else {
+            self.selected.saturating_sub(step)
+        };
+        self.selected = next;
+        self.sync_list_state();
+    }
+
+    fn cycle_sort_key(&mut self) {
+        self.sort_key = self.sort_key.next();
+        self.sort_dir = self.sort_key.default_dir();
+        self.recompute_view();
+        self.status = format!(
+            "sort: {} {}",
+            self.sort_key.as_str(),
+            self.sort_dir.as_str()
+        );
+    }
+
+    fn toggle_sort_dir(&mut self) {
+        self.sort_dir = self.sort_dir.toggle();
+        self.recompute_view();
+        self.status = format!(
+            "sort: {} {}",
+            self.sort_key.as_str(),
+            self.sort_dir.as_str()
+        );
     }
 
     pub fn selected_skill(&self) -> Option<&SkillRecord> {
@@ -771,6 +835,14 @@ impl App {
     }
 
     fn handle_list_key(&mut self, key: KeyEvent) -> Result<()> {
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                KeyCode::Char('f' | 'F') => self.page_list(1),
+                KeyCode::Char('b' | 'B') => self.page_list(-1),
+                _ => {}
+            }
+            return Ok(());
+        }
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('j') | KeyCode::Down => {
@@ -789,15 +861,20 @@ impl App {
                     self.sync_list_state();
                 }
             }
+            KeyCode::PageDown => self.page_list(1),
+            KeyCode::PageUp => self.page_list(-1),
             KeyCode::Char('/') => {
                 self.mode = Mode::Search;
                 self.input = self.filters.query.clone();
             }
             KeyCode::Char('f') => self.mode = Mode::Filter,
+            KeyCode::Char('S') => self.toggle_sort_dir(),
             KeyCode::Char('s') => {
-                self.sort_key = self.sort_key.next();
-                self.recompute_view();
-                self.status = format!("sort: {}", self.sort_key.as_str());
+                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    self.toggle_sort_dir();
+                } else {
+                    self.cycle_sort_key();
+                }
             }
             KeyCode::Char('r') => {
                 self.set_busy("Refreshing skill list …");
@@ -1776,6 +1853,7 @@ mod tests {
         app.skills[0].author = None;
         app.skills[1].author = Some("abc".into());
         app.sort_key = SortKey::Author;
+        app.sort_dir = SortKey::Author.default_dir();
         app.recompute_view();
         let names: Vec<&str> = app
             .filtered_indices
@@ -1791,6 +1869,7 @@ mod tests {
         app.skills[0].source = InstallSource::Npx;
         app.skills[1].source = InstallSource::Manual;
         app.sort_key = SortKey::Source;
+        app.sort_dir = SortKey::Source.default_dir();
         app.recompute_view();
         let names: Vec<&str> = app
             .filtered_indices
@@ -1812,6 +1891,110 @@ mod tests {
         assert!(seen.contains(&SortKey::Author));
         assert!(seen.contains(&SortKey::Source));
         assert_eq!(SortKey::Source.next(), SortKey::Name);
+        assert_eq!(SortKey::Score.default_dir(), SortDir::Desc);
+        assert_eq!(SortKey::Name.default_dir(), SortDir::Asc);
+        assert_eq!(SortDir::Desc.toggle(), SortDir::Asc);
+        assert_eq!(SortDir::Desc.marker(), "↓");
+    }
+
+    #[test]
+    fn toggle_sort_dir_reverses_score_order() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = sample_app();
+        assert_eq!(app.sort_key, SortKey::Score);
+        assert_eq!(app.sort_dir, SortDir::Desc);
+        assert_eq!(app.selected_skill().unwrap().name, "alpha");
+        app.handle_key(KeyEvent::new(KeyCode::Char('S'), KeyModifiers::SHIFT))
+            .unwrap();
+        assert_eq!(app.sort_dir, SortDir::Asc);
+        assert_eq!(app.mode, Mode::List);
+        let names: Vec<&str> = app
+            .filtered_indices
+            .iter()
+            .map(|&i| app.skills[i].name.as_str())
+            .collect();
+        assert_eq!(names, vec!["beta", "alpha"]);
+    }
+
+    #[test]
+    fn cycle_sort_key_resets_direction_to_default() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = sample_app();
+        app.sort_dir = SortDir::Asc;
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.sort_key, SortKey::LastHit);
+        assert_eq!(app.sort_dir, SortDir::Desc);
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.sort_key, SortKey::Author);
+        assert_eq!(app.sort_dir, SortDir::Asc);
+    }
+
+    fn named_skills_app(n: usize) -> App {
+        let mut app = App::new("/tmp/proj".into(), "/tmp/home".into());
+        app.skills = (0..n)
+            .map(|i| SkillRecord {
+                id: format!("s{i}"),
+                name: format!("s{i:02}"),
+                description: String::new(),
+                scope: Scope::User,
+                agents: vec![Agent::Cursor],
+                locations: vec![],
+                install_kind: InstallKind::Copy,
+                source: InstallSource::Manual,
+                source_url: None,
+                author: None,
+                version: None,
+                pinned: false,
+                stats: SkillStats {
+                    hits: 0,
+                    sessions_total: 0,
+                    last_hit_at: None,
+                    activation_rate: None,
+                    delete_score: i as f64,
+                },
+            })
+            .collect();
+        app.sort_key = SortKey::Name;
+        app.sort_dir = SortDir::Asc;
+        app.list_page_rows = 5;
+        app.recompute_view();
+        app
+    }
+
+    #[test]
+    fn ctrl_f_pages_down_without_opening_filter() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = named_skills_app(20);
+        assert_eq!(app.selected_skill().unwrap().name, "s00");
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert_eq!(app.mode, Mode::List);
+        assert_eq!(app.selected_skill().unwrap().name, "s04");
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.mode, Mode::Filter);
+    }
+
+    #[test]
+    fn page_keys_clamp_at_ends() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = named_skills_app(20);
+        app.handle_key(KeyEvent::new(KeyCode::PageUp, KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.selected, 0);
+        app.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert_eq!(app.selected, 0);
+        for _ in 0..10 {
+            app.handle_key(KeyEvent::new(KeyCode::PageDown, KeyModifiers::NONE))
+                .unwrap();
+        }
+        assert_eq!(app.selected, 19);
+        app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert_eq!(app.selected, 19);
     }
 
     #[test]

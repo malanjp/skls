@@ -80,11 +80,12 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         String::new()
     };
     let title = format!(
-        " skls  view:{}  scope:{}  agents:{}  sort:{}  window:{}d  sample:{}{selected} ",
+        " skls  view:{}  scope:{}  agents:{}  sort:{}{}  window:{}d  sample:{}{selected} ",
         app.list_view.as_str(),
         scope_label(app.filters.scope),
         agents,
         app.sort_key.as_str(),
+        app.sort_dir.marker(),
         app.window_days,
         sample
     );
@@ -103,6 +104,8 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
         .split(area);
+
+    app.list_page_rows = panes[0].height.saturating_sub(2).max(1) as usize;
 
     let (items, list_title, detail) = match app.list_view {
         ListView::Skills => skill_list_content(app),
@@ -369,7 +372,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Mode::AddAgent => " j/k  Space  */x all/none  Enter=next  Esc=back ".to_string(),
         Mode::AddScope => " [p]project [u]user  Esc=back  q=cancel ".to_string(),
         Mode::List => format!(
-            " j/k  t view  Space/* /x select  / search  f filter  s sort  a add  d del  u upd  r/R refresh  ?  q{warn} "
+            " j/k  C-f/C-b page  t view  Space/* /x select  / search  f filter  s sort  S dir  a add  d del  u upd  r/R refresh  ?  q{warn} "
         ),
     };
     let p = Paragraph::new(text).block(Block::default().borders(Borders::ALL));
@@ -392,13 +395,16 @@ fn draw_help_modal(frame: &mut Frame) {
     let text = "\
 Keys
   j / k     move up/down
+  C-f / PgDn  page down
+  C-b / PgUp  page up
   t         cycle view (skills → plugins → mcp)
   Space     toggle select
   *         select/clear all visible
   x         clear selection
   /         search name/description
   f         filter (scope · agents)
-  s         cycle sort (skills view)
+  s         cycle sort key (skills view)
+  S         toggle sort direction (asc / desc)
   a         add (skills: gh/npx · plugins: catalog CLI)
   d         delete (selection or current row)
   u         update
