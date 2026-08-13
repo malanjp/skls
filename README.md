@@ -68,7 +68,7 @@ On startup the skill list appears first, then activation is sampled. With defaul
 
 `t` cycles the list: **skills → plugins → MCP**. List on the left, detail on the right. `[ ]` / `[x]` mark multi-select.
 
-**Skills** columns: `NAME` · `SCOPE` · `SRC` (source: `gh` / `npx` / `plugin` / `manual`) · `AUTHOR` · `RATE` · `SCORE`. Default sort is `delete_score` (higher = stronger delete candidate). Author comes from the SKILL.md frontmatter, the plugin manifest, or the GitHub owner of the source repo.
+**Skills** columns: `NAME` · `SCOPE` · `SRC` (`plugin` / `gh skill` / `npx skills` / `manual`) · `AUTHOR` · `RATE` · `SCORE`. Default sort is `delete_score` (higher = stronger delete candidate). Author comes from the SKILL.md frontmatter, the plugin manifest, or the GitHub owner of the source repo.
 
 **Plugins** columns: `NAME` · `SCOPE` · `MARKET` · `SK` (bundled skills) · `MCP`.
 

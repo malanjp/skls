@@ -18,6 +18,7 @@
 - インストール済みプラグインパッケージと同梱 MCP サーバーの一覧（`t` で切替）。プラグイン列: `NAME` / `SCOPE` / `MARKET` / `SK` / `MCP`。MCP 列: `NAME` / `TRANS` / `PLUGIN` / `AGENTS`
 - ホストのカタログ CLI によるプラグインの追加・更新・削除（`claude plugin install|update|uninstall`、`copilot plugin install|update|uninstall`、`codex plugin add|remove`）。Codex の更新は `plugin add` の再実行。uninstall の CLI がすべて失敗したときだけパスをフォールバックで消す
 - `--dump-json` の出力をスキル配列から `{ skills, plugins, mcp_servers }` に変更
+- スキル一覧の `SRC` を `plugin` / `gh skill` / `npx skills` / `manual` と明示。プラグイン内だけのパスは GitHub provenance があっても `plugin` のまま
 
 ## [0.4.0] - 2026-08-13
 

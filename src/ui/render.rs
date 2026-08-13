@@ -139,7 +139,7 @@ fn skill_list_content(app: &App) -> (Vec<ListItem<'static>>, String, String) {
                 mark,
                 &s.name,
                 s.scope.as_str(),
-                s.source.as_str(),
+                s.source.label(),
                 s.author.as_deref().unwrap_or("-"),
                 s.stats.activation_rate,
                 s.stats.delete_score,
@@ -172,7 +172,8 @@ fn skill_list_content(app: &App) -> (Vec<ListItem<'static>>, String, String) {
                  ────────────────\n\
                  scope      {}\n\
                  agents     {}\n\
-                 source     {}  ({})\n\
+                 source     {}\n\
+                 kind       {}\n\
                  url        {}\n\
                  author     {}\n\
                  version    {}   pin:{}\n\
@@ -1060,7 +1061,7 @@ fn truncate(s: &str, max: usize) -> String {
 }
 
 /// Format one skill inventory row.
-/// Columns: mark(3) name(16) scope(7) src(6) author(12) rate(6) score(5).
+/// Columns: mark(3) name(16) scope(7) src(10) author(12) rate(6) score(5).
 fn format_skill_list_row(
     mark: &str,
     name: &str,
@@ -1072,10 +1073,10 @@ fn format_skill_list_row(
 ) -> String {
     let rate = format_rate_column(activation_rate);
     format!(
-        "{mark} {:<16} {:7} {:<6} {:<12} {rate} {:>5.0}",
+        "{mark} {:<16} {:7} {:<10} {:<12} {rate} {:>5.0}",
         truncate(name, 16),
         scope,
-        source,
+        truncate(source, 10),
         truncate(author, 12),
         delete_score
     )
@@ -1093,7 +1094,7 @@ fn skill_list_title(checked_count: usize) -> String {
     // (HighlightSpacing::Always reserves that gutter for every row).
     let highlight_pad = " ".repeat(LIST_HIGHLIGHT.chars().count());
     let cols = format!(
-        "{highlight_pad}{:<3} {:<16} {:7} {:<6} {:<12} {:>6} {:>5}",
+        "{highlight_pad}{:<3} {:<16} {:7} {:<10} {:<12} {:>6} {:>5}",
         "", "NAME", "SCOPE", "SRC", "AUTHOR", "RATE", "SCORE"
     );
     if checked_count > 0 {
@@ -1176,7 +1177,7 @@ mod tests {
                 "[ ]",
                 "agent-reach",
                 "user",
-                "npx",
+                "npx skills",
                 "vercel-labs",
                 Some(0.0),
                 85.0
@@ -1184,7 +1185,7 @@ mod tests {
         );
         // Same skeleton as the title, with data values in each column.
         let expected_header = format!(
-            "{highlight_pad}{:<3} {:<16} {:7} {:<6} {:<12} {:>6} {:>5} ",
+            "{highlight_pad}{:<3} {:<16} {:7} {:<10} {:<12} {:>6} {:>5} ",
             "", "NAME", "SCOPE", "SRC", "AUTHOR", "RATE", "SCORE"
         );
         assert_eq!(skill_list_title(0), expected_header);
@@ -1199,10 +1200,10 @@ mod tests {
         assert_eq!(&expected_header[scope_at..scope_at + 5], "SCOPE");
 
         let src_at = scope_at + 7 + 1;
-        assert_eq!(&row[src_at..src_at + 3], "npx");
+        assert_eq!(&row[src_at..src_at + 10], "npx skills");
         assert_eq!(&expected_header[src_at..src_at + 3], "SRC");
 
-        let author_at = src_at + 6 + 1;
+        let author_at = src_at + 10 + 1;
         assert_eq!(&row[author_at..author_at + 11], "vercel-labs");
         assert_eq!(&expected_header[author_at..author_at + 6], "AUTHOR");
 
@@ -1219,8 +1220,9 @@ mod tests {
     fn skill_list_rate_column_is_fixed_width() {
         assert_eq!(format_rate_column(Some(0.012)).len(), 6);
         assert_eq!(format_rate_column(None).len(), 6);
-        let with_rate = format_skill_list_row("[ ]", "a", "user", "gh", "-", Some(0.012), 10.0);
-        let without = format_skill_list_row("[ ]", "a", "user", "gh", "-", None, 10.0);
+        let with_rate =
+            format_skill_list_row("[ ]", "a", "user", "gh skill", "-", Some(0.012), 10.0);
+        let without = format_skill_list_row("[ ]", "a", "user", "gh skill", "-", None, 10.0);
         assert_eq!(with_rate.len(), without.len());
     }
 
