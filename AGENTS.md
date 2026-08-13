@@ -76,3 +76,10 @@ cargo test --lib
 - 削除確認なしの破壊的操作。
 - エージェント選択にホスト固定の数字キーを増やすこと。
 - README / CHANGELOG の片言語だけの更新。
+
+## Cursor Cloud specific instructions
+
+- **toolchain**: edition 2024 のため Rust 1.85+ が必須。Cloud VM の既定 `rustc` は古い場合があり、update script が `rustup default stable` を設定する。個別セッションでツールチェインを固定したいときは `rustup override set stable` を使う。
+- **lint/test/build/run**: 標準コマンドは `README.md`「Development」節と本ファイル「テスト」節を参照（`cargo clippy` / `cargo fmt --check` / `cargo test --lib` / `cargo build`）。`cargo clippy` は既存コードに warning（`collapsible_if` 等）が出るが error ではない。`cargo fmt --check` はクリーン。
+- **TUI の実行**: `skls` は全画面 TUI なので描画確認には実ターミナル（Desktop / computer use）が必要。ヘッドレスな検証には `cargo run -- --dump-json`（TUI を出さず在庫を JSON 出力）が使える。
+- **スキャン対象**: skls は実行ユーザーの HOME 配下スキルディレクトリを読む。Cloud VM は `~/.cursor/plugins/cache/**/skills/` にプラグインスキルが多数あり、`--dump-json` は実データ（`source: plugin`）を返す。テストで実 HOME のスキルツリーを壊さないこと。
