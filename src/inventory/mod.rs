@@ -277,6 +277,9 @@ fn gh_item_matches(rec: &SkillRecord, item: &GhSkillListItem, scope: Scope) -> b
     if rec.scope != scope {
         return false;
     }
+    if rec.project.is_some() {
+        return gh_item_matches_project_row(rec, item);
+    }
     let leaf = item
         .skill_name
         .rsplit('/')
@@ -287,14 +290,37 @@ fn gh_item_matches(rec: &SkillRecord, item: &GhSkillListItem, scope: Scope) -> b
     if rec.id == full_id || rec.id == leaf_id || rec.name == item.skill_name || rec.name == leaf {
         return true;
     }
+    gh_item_matches_location(rec, item, false)
+}
+
+/// Project-tagged rows skip name-only matching. Bind via `item.path` under
+/// the project root, or an existing location path / resolved path.
+fn gh_item_matches_project_row(rec: &SkillRecord, item: &GhSkillListItem) -> bool {
     if item.path.is_empty() {
         return false;
     }
-    let item_path = std::path::PathBuf::from(&item.path);
+    let item_path = Path::new(&item.path);
+    if rec
+        .project
+        .as_deref()
+        .is_some_and(|root| item_path.starts_with(root))
+    {
+        return true;
+    }
+    gh_item_matches_location(rec, item, true)
+}
+
+fn gh_item_matches_location(rec: &SkillRecord, item: &GhSkillListItem, exact_only: bool) -> bool {
+    if item.path.is_empty() {
+        return false;
+    }
+    let item_path = Path::new(&item.path);
     rec.locations.iter().any(|l| {
         l.path == item_path
-            || l.resolved.as_ref() == Some(&item_path)
-            || (l.path.file_name().is_some() && l.path.file_name() == item_path.file_name())
+            || l.resolved.as_deref() == Some(item_path)
+            || (!exact_only
+                && l.path.file_name().is_some()
+                && l.path.file_name() == item_path.file_name())
     })
 }
 
@@ -810,5 +836,42 @@ mod tests {
             Some("https://github.com/ex/skills")
         );
         assert_eq!(records[0].source, InstallSource::Gh);
+    }
+
+    #[test]
+    fn enrich_gh_applies_only_to_matching_project_row() {
+        let mut records = merge_discovered(vec![
+            disc_in_project("tdd", Agent::Cursor, PathBuf::from("/a")),
+            disc_in_project("tdd", Agent::Cursor, PathBuf::from("/b")),
+        ]);
+        // Name-only find() would enrich whichever row comes first.
+        records.sort_by(|a, b| b.project.cmp(&a.project));
+        enrich_with_gh(
+            &mut records,
+            &[GhSkillListItem {
+                skill_name: "tdd".into(),
+                path: "/a/.cursor/skills/tdd".into(),
+                scope: "project".into(),
+                source_url: "https://github.com/ex/skills".into(),
+                version: "v1".into(),
+                pinned: false,
+                agent_hosts: vec!["cursor".into()],
+            }],
+        );
+        let a = records
+            .iter()
+            .find(|r| r.project.as_deref() == Some(Path::new("/a")))
+            .unwrap();
+        let b = records
+            .iter()
+            .find(|r| r.project.as_deref() == Some(Path::new("/b")))
+            .unwrap();
+        assert_eq!(
+            a.source_url.as_deref(),
+            Some("https://github.com/ex/skills")
+        );
+        assert_eq!(a.source, InstallSource::Gh);
+        assert_eq!(b.source_url, None);
+        assert_ne!(b.source, InstallSource::Gh);
     }
 }
