@@ -74,6 +74,8 @@ pub struct App {
     pub scan_roots: Vec<PathBuf>,
     /// Number of projects listed in config (status `projects:N` uses scan_roots.len()).
     pub config_project_count: usize,
+    /// Config/resolve warnings kept across inventory reloads.
+    pub config_warnings: Vec<String>,
     pub skills: Vec<SkillRecord>,
     pub plugins: Vec<PluginRecord>,
     pub mcp_servers: Vec<McpServerRecord>,
@@ -161,6 +163,7 @@ impl App {
             home,
             scan_roots: Vec::new(),
             config_project_count: 0,
+            config_warnings: Vec::new(),
             skills: Vec::new(),
             plugins: Vec::new(),
             mcp_servers: Vec::new(),
@@ -521,7 +524,8 @@ impl App {
         };
         let inventory = build_inventory(&self.scan_roots, &self.home, &runner, &opts)?;
         let mut skills = inventory.skills;
-        self.warnings = inventory.warnings;
+        self.warnings = self.config_warnings.clone();
+        self.warnings.extend(inventory.warnings);
         self.plugins = inventory.plugins;
         self.mcp_servers = inventory.mcp;
 
@@ -2705,6 +2709,20 @@ mod tests {
             app.pending_action,
             Some(PendingAction::PluginDelete(_))
         ));
+    }
+
+    #[test]
+    fn reload_keeps_config_warnings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let proj = tmp.path().join("proj");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&proj).unwrap();
+        let mut app = App::new(proj, home);
+        app.scan_roots = vec![];
+        app.config_warnings = vec!["skip relative project path: foo".into()];
+        app.reload_light().unwrap();
+        assert!(app.warnings.iter().any(|w| w.contains("relative")));
     }
 
     #[test]

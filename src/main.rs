@@ -58,8 +58,8 @@ fn main() -> Result<()> {
     let mut app = App::new(project_root, home);
     app.scan_roots = scan_roots;
     app.config_project_count = loaded.projects.len();
-    app.warnings.extend(loaded.warnings);
-    app.warnings.extend(resolve_warnings);
+    app.config_warnings.extend(loaded.warnings);
+    app.config_warnings.extend(resolve_warnings);
     app.window_days = cli.window_days;
     app.analyze_limits = if cli.full_scan {
         AnalyzeLimits::unlimited()
