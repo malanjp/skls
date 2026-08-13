@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - List views for installed plugin packages and bundled MCP servers (`t` to cycle). Plugin columns: `NAME` / `SCOPE` / `MARKET` / `SK` / `MCP`. MCP columns: `NAME` / `TRANS` / `PLUGIN` / `AGENTS`
 - Plugin add / update / delete via host catalog CLIs (`claude plugin install|update|uninstall`, `copilot plugin install|update|uninstall`, `codex plugin add|remove`). Codex update re-runs `plugin add`. If every uninstall CLI fails, inventory paths are removed as a fallback
 - `--dump-json` now prints `{ skills, plugins, mcp_servers }` instead of a bare skills array
-- Skill list `SRC` uses `plugin` / `gh skill` / `npx skills` / `manual`. Plugin-only paths stay `plugin` even when GitHub provenance is present
+- Skill list `SRC` uses `plugin` / `gh skill` / `npx skills` / `manual`. A plugin copy no longer hides `npx skills` / `gh skill` when a lockfile, `~/.agents/skills`, or `gh skill list` says otherwise. Plugin-only paths stay `plugin`
 
 ## [0.4.0] - 2026-08-13
 

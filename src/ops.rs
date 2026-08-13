@@ -43,6 +43,12 @@ pub(crate) fn is_plugin_path(path: &Path) -> bool {
     s.contains("/plugins/")
 }
 
+/// Shared store used by `npx skills` (and gh `universal`).
+pub(crate) fn is_agents_skills_path(path: &Path) -> bool {
+    let s = path.to_string_lossy();
+    s.contains("/.agents/skills/") || s.ends_with("/.agents/skills")
+}
+
 pub fn plan_delete(skill: &SkillRecord, agents: &[Agent]) -> DeletePlan {
     let selected: Vec<_> = skill
         .locations
