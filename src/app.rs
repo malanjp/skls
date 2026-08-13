@@ -133,6 +133,8 @@ pub struct App {
     pub should_quit: bool,
     /// Work deferred until after the next redraw (keeps the TUI responsive).
     pub pending_action: Option<PendingAction>,
+    /// First `g` of a `gg` jump-to-top chord.
+    pending_g: bool,
 }
 
 impl App {
@@ -200,6 +202,7 @@ impl App {
             busy_message: String::new(),
             should_quit: false,
             pending_action: None,
+            pending_g: false,
         }
     }
 
@@ -853,15 +856,25 @@ impl App {
 
     fn handle_list_key(&mut self, key: KeyEvent) -> Result<()> {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.pending_g = false;
             match key.code {
                 KeyCode::Char('f' | 'F') => self.page_list(1),
                 KeyCode::Char('b' | 'B') => self.page_list(-1),
-                KeyCode::Char('h' | 'H') => self.jump_list_home(),
                 KeyCode::Char('l' | 'L') => self.jump_list_end(),
                 _ => {}
             }
             return Ok(());
         }
+        if matches!(key.code, KeyCode::Char('g')) && !key.modifiers.contains(KeyModifiers::SHIFT) {
+            if self.pending_g {
+                self.pending_g = false;
+                self.jump_list_home();
+            } else {
+                self.pending_g = true;
+            }
+            return Ok(());
+        }
+        self.pending_g = false;
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('j') | KeyCode::Down => {
@@ -884,8 +897,10 @@ impl App {
             KeyCode::PageUp => self.page_list(-1),
             KeyCode::Home => self.jump_list_home(),
             KeyCode::End => self.jump_list_end(),
-            // Many terminals send Backspace for Ctrl+H.
-            KeyCode::Backspace => self.jump_list_home(),
+            KeyCode::Char('L') => self.jump_list_end(),
+            KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.jump_list_end();
+            }
             KeyCode::Char('/') => {
                 self.mode = Mode::Search;
                 self.input = self.filters.query.clone();
@@ -2021,31 +2036,38 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_h_and_l_jump_to_list_ends() {
+    fn gg_and_shift_l_jump_to_list_ends() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let mut app = named_skills_app(20);
         app.selected = 10;
         app.sync_list_state();
-        app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL))
+        app.handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.selected, 10);
+        app.handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE))
             .unwrap();
         assert_eq!(app.mode, Mode::List);
+        assert_eq!(app.selected, 0);
+        app.selected = 5;
+        app.sync_list_state();
+        app.handle_key(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE))
+            .unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.selected, 6);
+        app.handle_key(KeyEvent::new(KeyCode::Char('L'), KeyModifiers::SHIFT))
+            .unwrap();
         assert_eq!(app.selected, 19);
+        app.selected = 3;
+        app.sync_list_state();
+        app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert_eq!(app.selected, 19);
+        app.selected = 8;
+        app.sync_list_state();
         app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL))
             .unwrap();
-        assert_eq!(app.selected, 0);
-        app.selected = 7;
-        app.sync_list_state();
-        app.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE))
-            .unwrap();
-        assert_eq!(app.selected, 19);
-        app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE))
-            .unwrap();
-        assert_eq!(app.selected, 0);
-        app.selected = 4;
-        app.sync_list_state();
-        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE))
-            .unwrap();
-        assert_eq!(app.selected, 0);
+        assert_eq!(app.selected, 8);
     }
 
     #[test]

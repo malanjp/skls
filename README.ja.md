@@ -83,8 +83,8 @@ skls --dump-json                     # TUI なしで JSON 出力（{ skills, plu
 | `j` / `k` | 移動 |
 | `Ctrl+F` / `PgDn` | 次ページ（端で止まる） |
 | `Ctrl+B` / `PgUp` | 前ページ（端で止まる） |
-| `Ctrl+H` / `Home` | 先頭行へ |
-| `Ctrl+L` / `End` | 末尾行へ |
+| `gg` / `Home` | 先頭行へ |
+| `L` / `Ctrl+L` / `End` | 末尾行へ |
 | `t` | ビュー切替（skills → plugins → mcp） |
 | `Space` | 行の選択トグル |
 | `*` | 表示中を全選択 / 全解除 |

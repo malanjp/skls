@@ -12,7 +12,7 @@
 
 - **MCP 一覧** — `t` で skills → plugins → MCP を切替。プラグインの `mcp.json` / `.mcp.json` から同梱サーバーを読む（Agent Plugins 1.0、および `command` / `url` だけの緩め形式）
 - **プラグインカタログ操作** — `claude plugin` / `copilot plugin` / `codex plugin` から追加・更新・削除。Cursor にカタログ CLI は無い（ホストの marketplace から入れる）。一覧はこれらのバイナリ無しでも動く
-- **ページ送りとソート方向** — `Ctrl+F` / `Ctrl+B`（および PageDown / PageUp）でページ移動。`Ctrl+H` / `Ctrl+L`（および Home / End）で先頭/末尾へ。`S` で昇順/降順を切替
+- **ページ送りとソート方向** — `Ctrl+F` / `Ctrl+B`（および PageDown / PageUp）でページ移動。`gg` / `Home` で先頭、`L` / `Ctrl+L` / `End` で末尾へ。`S` で昇順/降順を切替
 
 ### 追加
 
@@ -20,7 +20,7 @@
 - ホストのカタログ CLI によるプラグインの追加・更新・削除（`claude plugin install|update|uninstall`、`copilot plugin install|update|uninstall`、`codex plugin add|remove`）。Codex の更新は `plugin add` の再実行。uninstall の CLI がすべて失敗したときだけパスをフォールバックで消す
 - `--dump-json` の出力をスキル配列から `{ skills, plugins, mcp_servers }` に変更
 - スキル一覧の `SRC` を `plugin` / `gh skill` / `npx skills` / `manual` と明示。プラグインコピーがあっても lockfile / `~/.agents/skills` / `gh skill list` があれば `npx skills` / `gh skill` を優先。プラグイン内だけのパスは `plugin` のまま
-- 一覧のページ送り: `Ctrl+F` / `PageDown` で次、`Ctrl+B` / `PageUp` で前（端で停止。`j`/`k` は従来どおり循環）。歩幅はリスト表示行数 − 1。`Ctrl+H` / `Home` で先頭、`Ctrl+L` / `End` で末尾へジャンプ
+- 一覧のページ送り: `Ctrl+F` / `PageDown` で次、`Ctrl+B` / `PageUp` で前（端で停止。`j`/`k` は従来どおり循環）。歩幅はリスト表示行数 − 1。`gg` / `Home` で先頭、`L` / `Ctrl+L` / `End` で末尾へジャンプ
 - `S` でソート方向を切替。`s` はキーを循環し、そのキーの既定方向に戻す（`delete_score` / `rate` / `last_hit` は降順、`name` / `author` / `source` は昇順）。ヘッダに `↑` / `↓` を表示
 
 ## [0.4.0] - 2026-08-13
