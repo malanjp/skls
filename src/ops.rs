@@ -3,7 +3,10 @@
 use crate::adapters::command::CommandRunner;
 use crate::adapters::gh_skill::GhSkillCli;
 use crate::adapters::npx_skills::NpxSkillsCli;
-use crate::model::{Agent, InstallSource, Scope, SkillRecord};
+use crate::adapters::plugin_cli::PluginCli;
+use crate::model::{
+    Agent, InstallSource, PluginBackend, PluginRecord, Scope, SkillRecord, plugin_cli_agents,
+};
 use anyhow::{Context, Result, anyhow};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -186,6 +189,166 @@ pub fn execute_add(
         msgs.push(msg);
     }
     Ok(msgs.join("\n\n"))
+}
+
+#[derive(Debug, Clone)]
+pub struct PluginDeletePlan {
+    pub name: String,
+    pub spec: String,
+    pub scope: Scope,
+    pub agents: Vec<Agent>,
+    pub paths: Vec<PathBuf>,
+}
+
+pub fn plan_plugin_delete(plugin: &PluginRecord, agents: &[Agent]) -> PluginDeletePlan {
+    let selected: Vec<_> = plugin
+        .locations
+        .iter()
+        .filter(|l| agents.contains(&l.agent))
+        .cloned()
+        .collect();
+    let mut paths: Vec<_> = selected.iter().map(|l| l.path.clone()).collect();
+    paths.sort();
+    paths.dedup();
+    PluginDeletePlan {
+        name: plugin.name.clone(),
+        spec: plugin.spec.clone(),
+        scope: plugin.scope,
+        agents: agents.to_vec(),
+        paths,
+    }
+}
+
+pub fn execute_plugin_add(
+    runner: &impl CommandRunner,
+    spec: &str,
+    agents: &[Agent],
+    scope: Scope,
+) -> Result<String> {
+    if spec.trim().is_empty() {
+        return Err(anyhow!("plugin spec is empty (use name@marketplace)"));
+    }
+    if agents.is_empty() {
+        return Err(anyhow!("no agents selected"));
+    }
+    let cli = PluginCli { runner };
+    let mut msgs = Vec::new();
+    for &agent in agents {
+        let Some(backend) = PluginBackend::from_agent(agent) else {
+            msgs.push(format!(
+                "{agent}: no plugin catalog CLI (install from the host marketplace)"
+            ));
+            continue;
+        };
+        match cli.install(backend, spec, scope) {
+            Ok(out) => msgs.push(format!(
+                "{} plugin install {spec} ok ({agent})\n{}\n{}",
+                backend.as_str(),
+                out.stdout.trim(),
+                out.stderr.trim()
+            )),
+            Err(err) => msgs.push(format!("{agent}: {err}")),
+        }
+    }
+    if msgs.is_empty() {
+        return Err(anyhow!("no plugin CLI available for selected agents"));
+    }
+    Ok(msgs.join("\n\n"))
+}
+
+pub fn execute_plugin_update(
+    runner: &impl CommandRunner,
+    plugins: &[PluginRecord],
+    agents: &[Agent],
+) -> Result<String> {
+    let cli = PluginCli { runner };
+    let mut msgs = Vec::new();
+    for plugin in plugins {
+        let targets: Vec<Agent> = plugin
+            .agents
+            .iter()
+            .copied()
+            .filter(|a| agents.contains(a))
+            .collect();
+        if targets.is_empty() {
+            continue;
+        }
+        for agent in targets {
+            let Some(backend) = PluginBackend::from_agent(agent) else {
+                msgs.push(format!("{} @ {agent}: no plugin catalog CLI", plugin.name));
+                continue;
+            };
+            match cli.update(backend, &plugin.spec, plugin.scope) {
+                Ok(out) => msgs.push(format!(
+                    "{} plugin update {} ok ({agent})\n{}\n{}",
+                    backend.as_str(),
+                    plugin.spec,
+                    out.stdout.trim(),
+                    out.stderr.trim()
+                )),
+                Err(err) => msgs.push(format!("{} @ {agent}: {err}", plugin.name)),
+            }
+        }
+    }
+    if msgs.is_empty() {
+        return Err(anyhow!("nothing to update"));
+    }
+    Ok(msgs.join("\n\n"))
+}
+
+pub fn execute_plugin_delete(
+    runner: &impl CommandRunner,
+    plan: &PluginDeletePlan,
+) -> Result<Vec<String>> {
+    let cli = PluginCli { runner };
+    let mut messages = Vec::new();
+    let mut cli_ok = false;
+    for &agent in &plan.agents {
+        let Some(backend) = PluginBackend::from_agent(agent) else {
+            messages.push(format!(
+                "{agent}: no plugin catalog CLI; skipped (path left in place)"
+            ));
+            continue;
+        };
+        match cli.uninstall(backend, &plan.spec, plan.scope) {
+            Ok(out) => {
+                cli_ok = true;
+                messages.push(format!(
+                    "{} plugin uninstall {} ok ({agent})\n{}\n{}",
+                    backend.as_str(),
+                    plan.spec,
+                    out.stdout.trim(),
+                    out.stderr.trim()
+                ));
+            }
+            Err(err) => messages.push(format!("{agent}: {err}")),
+        }
+    }
+    if !cli_ok {
+        for path in &plan.paths {
+            match remove_skill_path(path) {
+                Ok(()) => messages.push(format!("removed {}", path.display())),
+                Err(err) => messages.push(format!("failed {}: {err}", path.display())),
+            }
+        }
+    }
+    if messages.is_empty() {
+        return Err(anyhow!("nothing to delete for {}", plan.name));
+    }
+    Ok(messages)
+}
+
+pub fn plugin_add_default_agents(claude: bool, copilot: bool, codex: bool) -> Vec<Agent> {
+    plugin_cli_agents()
+        .iter()
+        .copied()
+        .filter(|a| match a {
+            Agent::ClaudeCode => claude,
+            Agent::GitHubCopilot => copilot,
+            Agent::Codex => codex,
+            _ => false,
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone)]
@@ -677,5 +840,102 @@ mod tests {
         });
         let dirs = prefer_update_dirs(&skill, &[Agent::ClaudeCode]);
         assert_eq!(dirs, vec![claude.parent().unwrap().to_path_buf()]);
+    }
+
+    #[test]
+    fn execute_plugin_add_runs_claude_and_copilot() {
+        use crate::adapters::command::{CommandOutput, FakeCommandRunner};
+        let runner = FakeCommandRunner::with_responses(vec![
+            CommandOutput {
+                status: 0,
+                stdout: "installed".into(),
+                stderr: String::new(),
+            },
+            CommandOutput {
+                status: 0,
+                stdout: "ok".into(),
+                stderr: String::new(),
+            },
+        ]);
+        execute_plugin_add(
+            &runner,
+            "fmt@claude-plugins-official",
+            &[Agent::ClaudeCode, Agent::GitHubCopilot],
+            Scope::User,
+        )
+        .unwrap();
+        let calls = runner.calls();
+        assert_eq!(calls[0].0, "claude");
+        assert_eq!(calls[1].0, "copilot");
+    }
+
+    #[test]
+    fn execute_plugin_add_skips_cursor_without_cli() {
+        use crate::adapters::command::FakeCommandRunner;
+        let runner = FakeCommandRunner::default();
+        let msg = execute_plugin_add(&runner, "x@m", &[Agent::Cursor], Scope::User).unwrap();
+        assert!(msg.contains("no plugin catalog CLI"));
+        assert!(runner.calls().is_empty());
+    }
+
+    fn sample_plugin_record(path: PathBuf) -> PluginRecord {
+        PluginRecord {
+            id: "fmt".into(),
+            name: "fmt".into(),
+            description: String::new(),
+            version: None,
+            author: None,
+            marketplace: Some("m".into()),
+            spec: "fmt@m".into(),
+            agents: vec![Agent::ClaudeCode],
+            locations: vec![SkillLocation {
+                agent: Agent::ClaudeCode,
+                scope: Scope::User,
+                path,
+                kind: InstallKind::Copy,
+                resolved: None,
+            }],
+            skill_names: Vec::new(),
+            mcp_names: Vec::new(),
+            source_url: None,
+            scope: Scope::User,
+        }
+    }
+
+    #[test]
+    fn execute_plugin_delete_prefers_cli_over_path() {
+        use crate::adapters::command::{CommandOutput, FakeCommandRunner};
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin_dir = tmp.path().join("fmt");
+        fs::create_dir_all(&plugin_dir).unwrap();
+        let plugin = sample_plugin_record(plugin_dir.clone());
+        let plan = plan_plugin_delete(&plugin, &[Agent::ClaudeCode]);
+        let runner = FakeCommandRunner::with_responses(vec![CommandOutput {
+            status: 0,
+            stdout: "uninstalled".into(),
+            stderr: String::new(),
+        }]);
+        let msgs = execute_plugin_delete(&runner, &plan).unwrap();
+        assert!(msgs.iter().any(|m| m.contains("uninstall")));
+        assert!(plugin_dir.exists(), "CLI success should leave the path");
+        assert_eq!(runner.calls()[0].0, "claude");
+    }
+
+    #[test]
+    fn execute_plugin_delete_falls_back_to_path_when_cli_fails() {
+        use crate::adapters::command::{CommandOutput, FakeCommandRunner};
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin_dir = tmp.path().join("fmt");
+        fs::create_dir_all(&plugin_dir).unwrap();
+        let plugin = sample_plugin_record(plugin_dir.clone());
+        let plan = plan_plugin_delete(&plugin, &[Agent::ClaudeCode]);
+        let runner = FakeCommandRunner::with_responses(vec![CommandOutput {
+            status: 1,
+            stdout: String::new(),
+            stderr: "nope".into(),
+        }]);
+        let msgs = execute_plugin_delete(&runner, &plan).unwrap();
+        assert!(msgs.iter().any(|m| m.contains("removed")));
+        assert!(!plugin_dir.exists());
     }
 }

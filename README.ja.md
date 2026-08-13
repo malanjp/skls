@@ -16,10 +16,11 @@
 ## できること
 
 - **一覧**: 27 エージェントホスト（Cursor が読む `~/.agents/skills` も含む）。Claude Code / Cursor / Codex / agents プラグインに同梱されたスキルもスキャン。project / user とエージェントでフィルタ、複数選択で一括操作
+- **ビュー**: `t` で **skills → plugins → MCP** を切替。プラグインパッケージと同梱 MCP（`mcp.json`）も同じ TUI で見る
 - **指標**: 会話ログから発動率を算出し、削除判断スコア（`delete_score`）を表示する
-- **追加**: 都度 `gh skill` か `npx skills` を選んでインストール。初期選択は cursor / claude-code / codex（`*` で全ホスト）
-- **削除**: インベントリ上のパスを削除（確認必須）。npx 由来は `npx skills remove` も実行。共有ストア / プラグイン内パスは警告
-- **更新**: `gh skill` / `npx skills` を選んで更新する。インストール元を推定できれば Enter で採用できる
+- **追加**: スキルは `gh skill` / `npx skills`。プラグインは `claude plugin` / `copilot plugin` / `codex plugin`（Cursor にカタログ CLI は無い）
+- **削除**: インベントリ上のパスを削除（確認必須）。npx 由来は `npx skills remove` も実行。プラグイン削除はホストのカタログ CLI を先に使う。共有ストア / プラグイン内パスは警告
+- **更新**: スキルは `gh skill` / `npx skills`。プラグインは同じカタログ CLI（Codex は `plugin add` の再実行）
 
 ## 依存
 
@@ -27,8 +28,9 @@
 |------|------|
 | Rust 1.85+（edition 2024） | [`gh`](https://cli.github.com/)（`gh skill`） |
 | | Node.js / `npx`（[`npx skills`](https://skills.sh/)） |
+| | `claude` / `copilot` / `codex`（プラグインカタログの追加・更新・削除） |
 
-`gh` / `npx` がなくても一覧と発動率は動く。足りない CLI に依存する操作だけ無効になる。
+`gh` / `npx` / プラグイン CLI がなくても一覧と発動率は動く。足りない CLI に依存する操作だけ無効になる。
 
 ## インストール / 起動
 
@@ -57,16 +59,20 @@ skls --window-days 30                # 発動率の集計窓（日）
 skls --max-sessions 200              # エージェントあたり読むセッション数（既定 80）
 skls --max-bytes 1048576             # セッションファイルあたりの読込上限バイト（既定 256KiB）
 skls --full-scan                     # セッション / バイト上限なし（大きいログツリーでは遅い）
-skls --dump-json                     # TUI なしでインベントリを JSON 出力
+skls --dump-json                     # TUI なしで JSON 出力（{ skills, plugins, mcp_servers }）
 ```
 
 起動時はスキル一覧を先に出し、その後に発動率をサンプリング解析する。既定上限なら通常 1〜2 秒程度で一覧まで到達する。
 
 ## 画面
 
-左が一覧、右が詳細。行頭の `[ ]` / `[x]` は複数選択。デフォルトソートは `delete_score`（高いほど削除候補）。
+`t` で一覧を切替: **skills → plugins → MCP**。左が一覧、右が詳細。行頭の `[ ]` / `[x]` は複数選択。
 
-一覧の列は `NAME` · `SCOPE` · `SRC`（出所: `gh` / `npx` / `plugin` / `manual`）· `AUTHOR` · `RATE` · `SCORE`。作者は SKILL.md の frontmatter・プラグインマニフェスト・ソースリポジトリの GitHub owner から取得する。
+**スキル**の列は `NAME` · `SCOPE` · `SRC`（出所: `gh` / `npx` / `plugin` / `manual`）· `AUTHOR` · `RATE` · `SCORE`。デフォルトソートは `delete_score`（高いほど削除候補）。作者は SKILL.md の frontmatter・プラグインマニフェスト・ソースリポジトリの GitHub owner から取得する。
+
+**プラグイン**の列は `NAME` · `SCOPE` · `MARKET` · `SK`（同梱スキル数）· `MCP`。
+
+**MCP**の列は `NAME` · `TRANS`（`stdio` / `http` / `sse`）· `PLUGIN` · `AGENTS`。プラグインの `mcp.json` / `.mcp.json` を読む（Agent Plugins 1.0、および `command` / `url` だけの緩め形式）。
 
 タイトルの `sample:` は発動率解析の上限、ステータスの `sampled (-N older)` はスキップした古いセッション数を示す。
 
@@ -75,15 +81,16 @@ skls --dump-json                     # TUI なしでインベントリを JSON �
 | キー | 動作 |
 |------|------|
 | `j` / `k` | 移動 |
+| `t` | ビュー切替（skills → plugins → mcp） |
 | `Space` | 行の選択トグル |
 | `*` | 表示中を全選択 / 全解除 |
 | `x` | 選択クリア |
 | `/` | 名前・説明の検索 |
 | `f` | フィルタパネル |
 | `s` | ソート切替（`name` → `rate` → `delete_score` → `last_hit` → `author` → `source`） |
-| `a` | 追加フロー |
+| `a` | 追加フロー（スキル: `gh`/`npx`、プラグイン: カタログ CLI） |
 | `d` | 削除確認（選択があれば一括、なければカーソル行） |
-| `u` | 更新（backend 選択。推定があれば Enter で採用） |
+| `u` | 更新 |
 | `r` | 軽い再スキャン（一覧のみ） |
 | `R` | 発動率を再計算 |
 | `?` | ヘルプ |
@@ -101,12 +108,16 @@ skls --dump-json                     # TUI なしでインベントリを JSON �
 
 ### 追加（`a`）
 
-ダイアログで順に進む。`Esc` で前のステップ、`q` で中止。
+**スキル**ビューではダイアログで順に進む。`Esc` で前のステップ、`q` で中止。
 
 1. backend 選択: `1`/`g` = `gh skill`、`2`/`n` = `npx skills`
 2. ソース入力（gh: 検索語、npx: `owner/repo` または `owner/repo@skill`）
 3. 結果選択（gh の場合）
 4. エージェント（`j`/`k` で移動、`Space` でトグル、`*` 全選択、`x` 全解除。`Enter` で次へ）→ スコープ（`p`/`u`）で実行
+
+**プラグイン**ビューではカタログ spec（`name@marketplace`）を入力し、プラグイン CLI があるホスト（`claude-code` / `copilot` / `codex`）を選んでからスコープを決める。Cursor にカタログ CLI は無いので、ホストの marketplace から入れる。
+
+**MCP**ビューの `a` / `u` はプラグインビューへ誘導する（サーバーはプラグインに同梱される）。
 
 ### 削除（`d`）
 
@@ -117,7 +128,20 @@ skls --dump-json                     # TUI なしでインベントリを JSON �
 - 共有ストア（例: `~/.agents/skills`）やプラグイン内のパスは警告。複数ホストで同じパスは重複排除する
 - 削除後は一覧だけ再スキャンする。発動率は `R` で再計算する
 
+プラグイン削除（プラグインビュー、または MCP ビューから親プラグイン）はホストのカタログ CLI を先に実行する:
+
+| ホスト | CLI |
+|--------|-----|
+| Claude Code | `claude plugin uninstall SPEC --scope user\|project` |
+| Copilot | `copilot plugin uninstall NAME` |
+| Codex | `codex plugin remove NAME` |
+| Cursor | CLI なし — メッセージのみ。パスはそのまま |
+
+CLI がすべて失敗したときだけ、インベントリのパスをフォールバックで消す。
+
 ### 更新（`u`）
+
+**スキル**
 
 1. エージェント選択: `j`/`k` で移動、`Space` でトグル、`*` 全選択、`x` 全解除。`Enter` で次へ
 2. backend 選択: `1`/`g` = `gh skill`、`2`/`n` = `npx skills`（`Esc` でエージェント選択に戻る）
@@ -134,6 +158,14 @@ skls --dump-json                     # TUI なしでインベントリを JSON �
 | 混在・不明 | 推定なし（手動選択） |
 
 `gh skill update` は、メタデータのあるホストディレクトリ（`.cursor` / `.codex` など）を優先して `--dir` する。`npx skills update` はスコープに応じて `-g` / `-p` を付ける。
+
+**プラグイン**はエージェントを選んだあと、次を実行する:
+
+| ホスト | CLI |
+|--------|-----|
+| Claude Code | `claude plugin update SPEC --scope …` |
+| Copilot | `copilot plugin update NAME` |
+| Codex | `codex plugin add SPEC`（再インストール） |
 
 ## スキャン対象
 
@@ -173,7 +205,9 @@ skls --dump-json                     # TUI なしでインベントリを JSON �
 | Codex | `~/.codex/plugins/cache/*/*/*/skills/` | codex |
 | agents | `~/.agents/plugins/`（`skills/` ディレクトリを lenient に探索） | 共有ストアのホスト（cursor / cline / warp / universal） |
 
-プラグイン由来のスキルは `source: plugin` として扱う。`gh` / `npx` では更新せず、削除時はパスがプラグインインストール内にあることを警告する。
+プラグイン由来のスキルは `source: plugin` として扱う。`gh` / `npx` では更新せず、プラグイン内のスキルパスを消すときは警告する。
+
+パッケージ自体の追加・更新・削除は **plugins** ビュー（`t`）からカタログ CLI で行う。同梱 MCP（`mcp.json` / `.mcp.json`）は **mcp** ビューに出る。
 
 ## 発動率と削除スコア
 
