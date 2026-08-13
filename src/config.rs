@@ -36,6 +36,10 @@ pub fn paths_eq_canonical(a: &Path, b: &Path) -> bool {
     }
 }
 
+pub fn active_is_home(active: &Path, home: &Path) -> bool {
+    paths_eq_canonical(active, home)
+}
+
 fn expand_tilde(raw: &str, home: &Path) -> PathBuf {
     if raw == "~" {
         home.to_path_buf()
@@ -218,6 +222,17 @@ mod tests {
         assert!(loaded.warnings.iter().any(|w| w.contains("relative")));
         assert!(loaded.warnings.iter().any(|w| w.contains("missing-dir")));
         assert!(loaded.warnings.iter().any(|w| w.contains("home")));
+    }
+
+    #[test]
+    fn active_is_home_uses_canonical_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let proj = tmp.path().join("proj");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&proj).unwrap();
+        assert!(active_is_home(&home, &home));
+        assert!(!active_is_home(&proj, &home));
     }
 
     #[test]
