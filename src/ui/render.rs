@@ -79,13 +79,14 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         String::new()
     };
+    let (sort_key, sort_dir) = app.displayed_sort();
     let title = format!(
         " skls  view:{}  scope:{}  agents:{}  sort:{}{}  window:{}d  sample:{}{selected} ",
         app.list_view.as_str(),
         scope_label(app.filters.scope),
         agents,
-        app.sort_key.as_str(),
-        app.sort_dir.marker(),
+        sort_key.as_str(),
+        sort_dir.marker(),
         app.window_days,
         sample
     );

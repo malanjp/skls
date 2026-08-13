@@ -599,7 +599,7 @@ impl App {
                 idxs.sort_by(|&a, &b| {
                     let sa = &self.skills[a];
                     let sb = &self.skills[b];
-                    let asc = match self.sort_key {
+                    let order = match self.sort_key {
                         SortKey::Name => sa.name.cmp(&sb.name),
                         SortKey::Rate => {
                             let ra = sa.stats.activation_rate.unwrap_or(-1.0);
@@ -612,26 +612,19 @@ impl App {
                             .partial_cmp(&sb.stats.delete_score)
                             .unwrap_or(std::cmp::Ordering::Equal),
                         SortKey::LastHit => sa.stats.last_hit_at.cmp(&sb.stats.last_hit_at),
-                        SortKey::Author => Self::opt_cmp(&sa.author, &sb.author)
-                            .then_with(|| sa.name.cmp(&sb.name)),
+                        SortKey::Author => return self.cmp_author(sa, sb),
                         SortKey::Source => Self::source_rank(sa.source)
                             .cmp(&Self::source_rank(sb.source))
                             .then_with(|| sa.name.cmp(&sb.name)),
                     };
-                    self.apply_sort_dir(asc)
+                    self.apply_sort_dir(order)
                 });
             }
             ListView::Plugins => {
-                idxs.sort_by(|&a, &b| {
-                    self.apply_name_list_dir(self.plugins[a].name.cmp(&self.plugins[b].name))
-                });
+                idxs.sort_by(|&a, &b| self.plugins[a].name.cmp(&self.plugins[b].name));
             }
             ListView::Mcp => {
-                idxs.sort_by(|&a, &b| {
-                    self.apply_name_list_dir(
-                        self.mcp_servers[a].name.cmp(&self.mcp_servers[b].name),
-                    )
-                });
+                idxs.sort_by(|&a, &b| self.mcp_servers[a].name.cmp(&self.mcp_servers[b].name));
             }
         }
 
@@ -697,13 +690,16 @@ impl App {
         true
     }
 
-    /// author sort keeps `None` (unknown) at the end.
-    fn opt_cmp(a: &Option<String>, b: &Option<String>) -> std::cmp::Ordering {
-        match (a, b) {
-            (Some(x), Some(y)) => x.cmp(y),
+    /// author sort keeps `None` (unknown) at the end in both directions.
+    /// Direction applies only to the author name among known authors.
+    fn cmp_author(&self, a: &SkillRecord, b: &SkillRecord) -> std::cmp::Ordering {
+        match (&a.author, &b.author) {
+            (Some(x), Some(y)) => self
+                .apply_sort_dir(x.cmp(y))
+                .then_with(|| a.name.cmp(&b.name)),
             (Some(_), None) => std::cmp::Ordering::Less,
             (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
+            (None, None) => a.name.cmp(&b.name),
         }
     }
 
@@ -724,12 +720,11 @@ impl App {
         }
     }
 
-    /// Plugins / MCP are name lists. Score/rate default to Desc; invert so they stay A–Z
-    /// until the user picks a name-like key or toggles direction.
-    fn apply_name_list_dir(&self, asc: std::cmp::Ordering) -> std::cmp::Ordering {
-        match self.sort_key {
-            SortKey::Rate | SortKey::Score | SortKey::LastHit => self.apply_sort_dir(asc).reverse(),
-            SortKey::Name | SortKey::Author | SortKey::Source => self.apply_sort_dir(asc),
+    /// Header / status sort label. Plugins and MCP are always name ascending.
+    pub fn displayed_sort(&self) -> (SortKey, SortDir) {
+        match self.list_view {
+            ListView::Skills => (self.sort_key, self.sort_dir),
+            ListView::Plugins | ListView::Mcp => (SortKey::Name, SortDir::Asc),
         }
     }
 
@@ -774,6 +769,10 @@ impl App {
     }
 
     fn cycle_sort_key(&mut self) {
+        if self.list_view != ListView::Skills {
+            self.status = "sort key applies to skills view".into();
+            return;
+        }
         self.sort_key = self.sort_key.next();
         self.sort_dir = self.sort_key.default_dir();
         self.recompute_view();
@@ -785,6 +784,10 @@ impl App {
     }
 
     fn toggle_sort_dir(&mut self) {
+        if self.list_view != ListView::Skills {
+            self.status = "sort direction applies to skills view".into();
+            return;
+        }
         self.sort_dir = self.sort_dir.toggle();
         self.recompute_view();
         self.status = format!(
@@ -1902,6 +1905,27 @@ mod tests {
     }
 
     #[test]
+    fn sort_by_author_desc_keeps_unknown_last() {
+        let mut app = sample_app();
+        app.skills[0].author = None;
+        app.skills[1].author = Some("abc".into());
+        let mut gamma = app.skills[1].clone();
+        gamma.id = "c".into();
+        gamma.name = "gamma".into();
+        gamma.author = Some("zzz".into());
+        app.skills.push(gamma);
+        app.sort_key = SortKey::Author;
+        app.sort_dir = SortDir::Desc;
+        app.recompute_view();
+        let names: Vec<&str> = app
+            .filtered_indices
+            .iter()
+            .map(|&i| app.skills[i].name.as_str())
+            .collect();
+        assert_eq!(names, vec!["gamma", "beta", "alpha"]);
+    }
+
+    #[test]
     fn sort_by_source_ranks_managed_first() {
         let mut app = sample_app();
         app.skills[0].source = InstallSource::Npx;
@@ -2309,6 +2333,68 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE))
             .unwrap();
         assert_eq!(app.list_view, ListView::Skills);
+    }
+
+    #[test]
+    fn plugins_and_mcp_display_name_asc_sort() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = sample_app();
+        let mut zebra = sample_plugin();
+        zebra.id = "zebra".into();
+        zebra.name = "zebra".into();
+        let mut apple = sample_plugin();
+        apple.id = "apple".into();
+        apple.name = "apple".into();
+        app.plugins = vec![zebra, apple];
+        app.mcp_servers = vec![
+            crate::model::McpServerRecord {
+                id: "zeta".into(),
+                name: "zeta".into(),
+                transport: crate::model::McpTransport::Stdio,
+                command: Some("npx".into()),
+                args: vec![],
+                url: None,
+                plugin: Some("fmt".into()),
+                agents: vec![Agent::ClaudeCode],
+                locations: vec![],
+                scope: Scope::User,
+            },
+            crate::model::McpServerRecord {
+                id: "alpha".into(),
+                name: "alpha".into(),
+                transport: crate::model::McpTransport::Stdio,
+                command: Some("npx".into()),
+                args: vec![],
+                url: None,
+                plugin: Some("fmt".into()),
+                agents: vec![Agent::ClaudeCode],
+                locations: vec![],
+                scope: Scope::User,
+            },
+        ];
+        app.sort_key = SortKey::Score;
+        app.sort_dir = SortDir::Desc;
+        app.list_view = ListView::Plugins;
+        app.recompute_view();
+        assert_eq!(app.displayed_sort(), (SortKey::Name, SortDir::Asc));
+        let plugin_names: Vec<&str> = app
+            .filtered_indices
+            .iter()
+            .map(|&i| app.plugins[i].name.as_str())
+            .collect();
+        assert_eq!(plugin_names, vec!["apple", "zebra"]);
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.sort_key, SortKey::Score);
+        app.list_view = ListView::Mcp;
+        app.recompute_view();
+        assert_eq!(app.displayed_sort(), (SortKey::Name, SortDir::Asc));
+        let mcp_names: Vec<&str> = app
+            .filtered_indices
+            .iter()
+            .map(|&i| app.mcp_servers[i].name.as_str())
+            .collect();
+        assert_eq!(mcp_names, vec!["alpha", "zeta"]);
     }
 
     #[test]
