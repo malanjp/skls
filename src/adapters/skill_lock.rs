@@ -25,14 +25,19 @@ pub struct SkillLockEntry {
 /// Candidate lockfile paths for user / project scopes.
 pub fn skill_lock_paths(project_root: &Path, home: &Path) -> Vec<(crate::model::Scope, PathBuf)> {
     use crate::model::Scope;
-    vec![
-        (Scope::User, home.join(".agents/.skill-lock.json")),
-        (
-            Scope::Project,
-            project_root.join(".agents/.skill-lock.json"),
-        ),
-        (Scope::Project, project_root.join("skills-lock.json")),
-    ]
+    let mut paths = vec![(Scope::User, home.join(".agents/.skill-lock.json"))];
+    if let Some(xdg) = std::env::var_os("XDG_STATE_HOME") {
+        let xdg_lock = PathBuf::from(xdg).join("skills/.skill-lock.json");
+        if !paths.iter().any(|(_, p)| *p == xdg_lock) {
+            paths.push((Scope::User, xdg_lock));
+        }
+    }
+    paths.push((
+        Scope::Project,
+        project_root.join(".agents/.skill-lock.json"),
+    ));
+    paths.push((Scope::Project, project_root.join("skills-lock.json")));
+    paths
 }
 
 pub fn load_skill_lock(path: &Path) -> Option<SkillLock> {

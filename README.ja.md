@@ -68,7 +68,7 @@ skls --dump-json                     # TUI なしで JSON 出力（{ skills, plu
 
 `t` で一覧を切替: **skills → plugins → MCP**。左が一覧、右が詳細。行頭の `[ ]` / `[x]` は複数選択。
 
-**スキル**の列は `NAME` · `SCOPE` · `SRC`（出所: `gh` / `npx` / `plugin` / `manual`）· `AUTHOR` · `RATE` · `SCORE`。デフォルトソートは `delete_score`（高いほど削除候補）。作者は SKILL.md の frontmatter・プラグインマニフェスト・ソースリポジトリの GitHub owner から取得する。
+**スキル**の列は `NAME` · `SCOPE` · `SRC`（`plugin` / `gh skill` / `npx skills` / `manual`）· `AUTHOR` · `RATE` · `SCORE`。デフォルトソートは `delete_score`（高いほど削除候補）。作者は SKILL.md の frontmatter・プラグインマニフェスト・ソースリポジトリの GitHub owner から取得する。
 
 **プラグイン**の列は `NAME` · `SCOPE` · `MARKET` · `SK`（同梱スキル数）· `MCP`。
 

@@ -55,6 +55,10 @@ pub fn build_inventory(
         }
     }
 
+    for rec in &mut skills {
+        retain_plugin_source(rec);
+    }
+
     Ok(Inventory {
         skills,
         plugins,
@@ -113,6 +117,7 @@ pub fn merge_discovered(discovered: Vec<DiscoveredSkill>) -> Vec<SkillRecord> {
 
     let mut records: Vec<SkillRecord> = map.into_values().collect();
     for r in &mut records {
+        retain_plugin_source(r);
         r.agents.sort_by_key(|a| a.as_str());
         r.locations
             .sort_by(|a, b| a.agent.as_str().cmp(b.agent.as_str()));
@@ -290,15 +295,13 @@ pub fn enrich_with_skill_lock(records: &mut [SkillRecord], lock: &SkillLock, sco
         if rec.scope != scope {
             continue;
         }
-        let entry = lock
-            .skills
-            .get(&rec.name)
-            .or_else(|| lock.skills.get(&rec.id));
+        let entry = lock_entry_for(lock, rec);
         let Some(entry) = entry else {
             continue;
         };
-        // Don't override stronger gh provenance with lock membership alone.
-        if rec.source == InstallSource::Manual {
+        // Lock membership is the npx-skills signal. It outranks a plugin copy of
+        // the same name, but must not clobber gh-skill provenance.
+        if rec.source != InstallSource::Gh {
             rec.source = InstallSource::Npx;
         }
         if rec.source_url.is_none() && !entry.source_url.is_empty() {
@@ -316,11 +319,30 @@ pub fn enrich_with_skill_lock(records: &mut [SkillRecord], lock: &SkillLock, sco
     }
 }
 
+fn lock_entry_for<'a>(
+    lock: &'a SkillLock,
+    rec: &SkillRecord,
+) -> Option<&'a crate::adapters::skill_lock::SkillLockEntry> {
+    lock.skills
+        .get(&rec.name)
+        .or_else(|| lock.skills.get(&rec.id))
+        .or_else(|| {
+            rec.locations.iter().find_map(|l| {
+                l.path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .and_then(|n| lock.skills.get(n))
+            })
+        })
+}
+
 fn apply_gh_item(rec: &mut SkillRecord, item: &GhSkillListItem, scope: Scope) {
     // Prefer non-empty provenance; never clobber an existing URL with empty.
     if !item.source_url.is_empty() {
         rec.source_url = Some(item.source_url.clone());
-        rec.source = InstallSource::Gh;
+        if rec.source != InstallSource::Plugin || has_non_plugin_location(rec) {
+            rec.source = InstallSource::Gh;
+        }
         if rec.author.is_none() {
             rec.author = github_owner(&item.source_url);
         }
@@ -352,12 +374,22 @@ fn infer_source(d: &DiscoveredSkill) -> InstallSource {
     if let Some(source) = d.source {
         return source;
     }
+    let path = d
+        .location
+        .resolved
+        .as_deref()
+        .unwrap_or(d.location.path.as_path());
+    if crate::ops::is_plugin_path(path) {
+        return InstallSource::Plugin;
+    }
     if d.source_url.as_deref().is_some_and(|u| !u.is_empty()) {
         // github-repo / sourceURL in SKILL.md is the gh-skill metadata shape.
-        InstallSource::Gh
-    } else {
-        InstallSource::Manual
+        return InstallSource::Gh;
     }
+    if crate::ops::is_agents_skills_path(path) {
+        return InstallSource::Npx;
+    }
+    InstallSource::Manual
 }
 
 fn prefer_kind(a: InstallKind, b: InstallKind) -> InstallKind {
@@ -369,7 +401,8 @@ fn prefer_kind(a: InstallKind, b: InstallKind) -> InstallKind {
 }
 
 fn prefer_source(a: InstallSource, b: InstallSource) -> InstallSource {
-    // Gh > Npx > Plugin > Manual.
+    // Gh > Npx > Plugin > Manual. Plugin-only rows are forced back to Plugin
+    // after merge/enrich via [`retain_plugin_source`].
     let rank = |s: InstallSource| match s {
         InstallSource::Gh => 3,
         InstallSource::Npx => 2,
@@ -377,6 +410,32 @@ fn prefer_source(a: InstallSource, b: InstallSource) -> InstallSource {
         InstallSource::Manual => 0,
     };
     if rank(b) > rank(a) { b } else { a }
+}
+
+/// Skills whose inventory paths all live inside a plugin stay `plugin`,
+/// but only when no stronger installer (gh / npx) is already known.
+fn retain_plugin_source(rec: &mut SkillRecord) {
+    if rec.source != InstallSource::Manual {
+        return;
+    }
+    if rec.locations.is_empty() {
+        return;
+    }
+    let all_plugin = rec.locations.iter().all(location_is_plugin);
+    if all_plugin {
+        rec.source = InstallSource::Plugin;
+    }
+}
+
+fn location_is_plugin(l: &SkillLocation) -> bool {
+    crate::ops::is_plugin_path(&l.path)
+        || l.resolved
+            .as_ref()
+            .is_some_and(|p| crate::ops::is_plugin_path(p))
+}
+
+fn has_non_plugin_location(rec: &SkillRecord) -> bool {
+    rec.locations.iter().any(|l| !location_is_plugin(l))
 }
 
 #[cfg(test)]
@@ -422,6 +481,43 @@ mod tests {
         d.source_url = Some("https://github.com/mattpocock/skills".into());
         let records = merge_discovered(vec![d]);
         assert_eq!(records[0].author.as_deref(), Some("mattpocock"));
+        assert_eq!(records[0].source, InstallSource::Gh);
+    }
+
+    #[test]
+    fn agents_skills_store_infers_npx_even_with_plugin_copy() {
+        let mut agents = disc("find-skills", Agent::Cursor, Scope::User);
+        agents.location.path = PathBuf::from("/home/.agents/skills/find-skills");
+        let mut plugin = disc("find-skills", Agent::ClaudeCode, Scope::User);
+        plugin.location.path =
+            PathBuf::from("/home/.claude/plugins/cache/m/sp/1.0.0/skills/find-skills");
+        plugin.source = Some(InstallSource::Plugin);
+        let records = merge_discovered(vec![agents, plugin]);
+        assert_eq!(records[0].source, InstallSource::Npx);
+    }
+
+    #[test]
+    fn lockfile_marks_npx_over_plugin_copy() {
+        let mut plugin = disc("find-skills", Agent::ClaudeCode, Scope::User);
+        plugin.location.path =
+            PathBuf::from("/home/.claude/plugins/cache/m/sp/1.0.0/skills/find-skills");
+        plugin.source = Some(InstallSource::Plugin);
+        let mut host = disc("find-skills", Agent::Cursor, Scope::User);
+        host.location.path = PathBuf::from("/home/.cursor/skills/find-skills");
+        let mut records = merge_discovered(vec![plugin, host]);
+        assert_eq!(records[0].source, InstallSource::Plugin);
+        let mut lock = SkillLock::default();
+        lock.skills.insert(
+            "find-skills".into(),
+            crate::adapters::skill_lock::SkillLockEntry {
+                source: "vercel-labs/skills".into(),
+                source_url: "https://github.com/vercel-labs/skills.git".into(),
+                source_type: "github".into(),
+            },
+        );
+        enrich_with_skill_lock(&mut records, &lock, Scope::User);
+        retain_plugin_source(&mut records[0]);
+        assert_eq!(records[0].source, InstallSource::Npx);
     }
 
     #[test]
@@ -458,6 +554,59 @@ mod tests {
         assert_eq!(records[0].source, InstallSource::Gh);
         assert_eq!(records[0].version.as_deref(), Some("v2"));
         assert!(records[0].pinned);
+    }
+
+    #[test]
+    fn enrich_does_not_override_plugin_source() {
+        let mut d = disc("tdd", Agent::ClaudeCode, Scope::User);
+        d.location.path = PathBuf::from("/home/.claude/plugins/cache/m/sp/1.0.0/skills/tdd");
+        d.source = Some(InstallSource::Plugin);
+        d.source_url = Some("https://github.com/ex/skills".into());
+        let mut records = merge_discovered(vec![d]);
+        assert_eq!(records[0].source, InstallSource::Plugin);
+        enrich_with_gh(
+            &mut records,
+            &[GhSkillListItem {
+                skill_name: "tdd".into(),
+                path: "/home/.claude/plugins/cache/m/sp/1.0.0/skills/tdd".into(),
+                scope: "user".into(),
+                source_url: "https://github.com/ex/skills".into(),
+                version: "v2".into(),
+                pinned: false,
+                agent_hosts: vec!["claude-code".into()],
+            }],
+        );
+        retain_plugin_source(&mut records[0]);
+        assert_eq!(records[0].source, InstallSource::Plugin);
+        assert_eq!(
+            records[0].source_url.as_deref(),
+            Some("https://github.com/ex/skills")
+        );
+    }
+
+    #[test]
+    fn gh_enrich_sets_gh_when_host_copy_exists_beside_plugin() {
+        let mut host = disc("tdd", Agent::Cursor, Scope::User);
+        host.location.path = PathBuf::from("/home/.cursor/skills/tdd");
+        let mut plugin = disc("tdd", Agent::ClaudeCode, Scope::User);
+        plugin.location.path = PathBuf::from("/home/.claude/plugins/cache/m/sp/1.0.0/skills/tdd");
+        plugin.source = Some(InstallSource::Plugin);
+        let mut records = merge_discovered(vec![host, plugin]);
+        assert_eq!(records[0].source, InstallSource::Plugin);
+        enrich_with_gh(
+            &mut records,
+            &[GhSkillListItem {
+                skill_name: "tdd".into(),
+                path: "/home/.cursor/skills/tdd".into(),
+                scope: "user".into(),
+                source_url: "https://github.com/ex/skills".into(),
+                version: "v2".into(),
+                pinned: false,
+                agent_hosts: vec!["cursor".into()],
+            }],
+        );
+        retain_plugin_source(&mut records[0]);
+        assert_eq!(records[0].source, InstallSource::Gh);
     }
 
     #[test]

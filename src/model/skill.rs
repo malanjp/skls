@@ -298,11 +298,21 @@ impl InstallSource {
             InstallSource::Plugin => "plugin",
         }
     }
+
+    /// List / detail label. Distinguishes `gh skill` from `npx skills`.
+    pub fn label(self) -> &'static str {
+        match self {
+            InstallSource::Gh => "gh skill",
+            InstallSource::Npx => "npx skills",
+            InstallSource::Manual => "manual",
+            InstallSource::Plugin => "plugin",
+        }
+    }
 }
 
 impl std::fmt::Display for InstallSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
+        write!(f, "{}", self.label())
     }
 }
 
@@ -546,6 +556,16 @@ mod tests {
         );
         assert_eq!(github_owner("https://example.com/x"), None);
         assert_eq!(github_owner(""), None);
+    }
+
+    #[test]
+    fn install_source_labels_distinguish_backends() {
+        assert_eq!(InstallSource::Gh.label(), "gh skill");
+        assert_eq!(InstallSource::Npx.label(), "npx skills");
+        assert_eq!(InstallSource::Plugin.label(), "plugin");
+        assert_eq!(InstallSource::Manual.label(), "manual");
+        assert_eq!(InstallSource::Gh.as_str(), "gh");
+        assert_eq!(InstallSource::Npx.as_str(), "npx");
     }
 
     #[test]
