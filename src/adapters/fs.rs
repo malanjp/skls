@@ -126,12 +126,7 @@ pub fn skill_roots(
             home.join(".claude/skills"),
             None,
         ),
-        (
-            Agent::Codex,
-            Scope::User,
-            home.join(".codex/skills"),
-            None,
-        ),
+        (Agent::Codex, Scope::User, home.join(".codex/skills"), None),
         (
             Agent::GeminiCli,
             Scope::User,
@@ -168,12 +163,7 @@ pub fn skill_roots(
             home.join(".config/opencode/skills"),
             None,
         ),
-        (
-            Agent::Pi,
-            Scope::User,
-            home.join(".pi/agent/skills"),
-            None,
-        ),
+        (Agent::Pi, Scope::User, home.join(".pi/agent/skills"), None),
         (
             Agent::Amp,
             Scope::User,
@@ -222,12 +212,7 @@ pub fn skill_roots(
             home.join(".kilocode/skills"),
             None,
         ),
-        (
-            Agent::Qoder,
-            Scope::User,
-            home.join(".qoder/skills"),
-            None,
-        ),
+        (Agent::Qoder, Scope::User, home.join(".qoder/skills"), None),
         (Agent::Roo, Scope::User, home.join(".roo/skills"), None),
         (Agent::Trae, Scope::User, home.join(".trae/skills"), None),
         (
@@ -686,7 +671,9 @@ metadata:
         let proj = roots
             .iter()
             .find(|(a, s, p, _)| {
-                *a == Agent::Cursor && *s == Scope::Project && p == Path::new("/proj/.cursor/skills")
+                *a == Agent::Cursor
+                    && *s == Scope::Project
+                    && p == Path::new("/proj/.cursor/skills")
             })
             .unwrap();
         assert_eq!(proj.3.as_deref(), Some(Path::new("/proj")));

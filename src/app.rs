@@ -2722,6 +2722,8 @@ mod tests {
         std::fs::create_dir_all(&proj).unwrap();
         let mut app = App::new(proj, home);
         app.scan_roots = vec![];
+        app.gh_available = false;
+        app.npx_available = false;
         app.config_warnings = vec!["skip relative project path: foo".into()];
         app.reload_light().unwrap();
         assert!(app.warnings.iter().any(|w| w.contains("relative")));

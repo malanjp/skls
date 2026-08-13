@@ -97,7 +97,10 @@ pub fn load_config(path: &Path, home: &Path) -> LoadedConfig {
             continue;
         }
         let Ok(canon) = expanded.canonicalize() else {
-            warnings.push(format!("skip unreadable project path: {}", expanded.display()));
+            warnings.push(format!(
+                "skip unreadable project path: {}",
+                expanded.display()
+            ));
             continue;
         };
         if paths_eq_canonical(&canon, home) {
@@ -114,21 +117,16 @@ pub fn load_config(path: &Path, home: &Path) -> LoadedConfig {
     LoadedConfig { projects, warnings }
 }
 
-pub fn resolve_scan_roots(
-    config_projects: &[PathBuf],
-    active: &Path,
-    home: &Path,
-) -> (Vec<PathBuf>, Vec<String>) {
+pub fn resolve_scan_roots(config_projects: &[PathBuf], active: &Path, home: &Path) -> Vec<PathBuf> {
     let mut roots = config_projects.to_vec();
-    let warnings = Vec::new();
     let active_abs = absolutize(active);
     if paths_eq_canonical(&active_abs, home) {
-        return (roots, warnings);
+        return roots;
     }
     if !roots.iter().any(|p| paths_eq_canonical(p, &active_abs)) {
         roots.push(active_abs);
     }
-    (roots, warnings)
+    roots
 }
 
 #[cfg(test)]
@@ -197,7 +195,7 @@ mod tests {
         fs::create_dir_all(&home).unwrap();
         fs::create_dir_all(&repo).unwrap();
         let cfg = tmp.path().join("config.toml");
-        let repo_tilde = format!("~/repo");
+        let repo_tilde = "~/repo";
         let tilde_repo = home.join("repo");
         fs::create_dir_all(&tilde_repo).unwrap();
         fs::write(
@@ -242,13 +240,8 @@ mod tests {
         let repo = tmp.path().join("repo");
         fs::create_dir_all(&home).unwrap();
         fs::create_dir_all(&repo).unwrap();
-        let (roots, warnings) = resolve_scan_roots(
-            &[repo.canonicalize().unwrap()],
-            &home,
-            &home,
-        );
+        let roots = resolve_scan_roots(&[repo.canonicalize().unwrap()], &home, &home);
         assert_eq!(roots, vec![repo.canonicalize().unwrap()]);
-        assert!(warnings.is_empty());
     }
 
     #[test]
@@ -259,12 +252,12 @@ mod tests {
         fs::create_dir_all(&home).unwrap();
         fs::create_dir_all(&repo).unwrap();
         let repo_c = repo.canonicalize().unwrap();
-        let (roots, _) = resolve_scan_roots(&[repo_c.clone()], &repo, &home);
+        let roots = resolve_scan_roots(&[repo_c.clone()], &repo, &home);
         assert_eq!(roots, vec![repo_c.clone()]);
         let extra = tmp.path().join("other");
         fs::create_dir_all(&extra).unwrap();
         let extra_c = extra.canonicalize().unwrap();
-        let (roots, _) = resolve_scan_roots(&[repo_c.clone()], &extra, &home);
+        let roots = resolve_scan_roots(&[repo_c.clone()], &extra, &home);
         assert_eq!(roots, vec![repo_c, extra_c]);
     }
 }

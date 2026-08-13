@@ -187,16 +187,17 @@ fn skill_list_content(app: &App) -> (Vec<ListItem<'static>>, String, String) {
         .map(|&skill_i| {
             let s = &app.skills[skill_i];
             let mark = if app.is_checked(s) { "[x]" } else { "[ ]" };
-            let line = format_skill_list_row(
+            let project = project_column_label(s.project.as_ref());
+            let line = format_skill_list_row(SkillListRow {
                 mark,
-                &s.name,
-                s.scope.as_str(),
-                &project_column_label(s.project.as_ref()),
-                s.source.label(),
-                s.author.as_deref().unwrap_or("-"),
-                s.stats.activation_rate,
-                s.stats.delete_score,
-            );
+                name: &s.name,
+                scope: s.scope.as_str(),
+                project: &project,
+                source: s.source.label(),
+                author: s.author.as_deref().unwrap_or("-"),
+                activation_rate: s.stats.activation_rate,
+                delete_score: s.stats.delete_score,
+            });
             ListItem::new(Line::from(line))
         })
         .collect();
@@ -1131,27 +1132,30 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
-/// Format one skill inventory row.
-/// Columns: mark(3) name(16) scope(7) project(16) src(10) author(12) rate(6) score(5).
-fn format_skill_list_row(
-    mark: &str,
-    name: &str,
-    scope: &str,
-    project: &str,
-    source: &str,
-    author: &str,
+struct SkillListRow<'a> {
+    mark: &'a str,
+    name: &'a str,
+    scope: &'a str,
+    project: &'a str,
+    source: &'a str,
+    author: &'a str,
     activation_rate: Option<f64>,
     delete_score: f64,
-) -> String {
-    let rate = format_rate_column(activation_rate);
+}
+
+/// Format one skill inventory row.
+/// Columns: mark(3) name(16) scope(7) project(16) src(10) author(12) rate(6) score(5).
+fn format_skill_list_row(row: SkillListRow<'_>) -> String {
+    let rate = format_rate_column(row.activation_rate);
     format!(
-        "{mark} {:<16} {:7} {:<16} {:<10} {:<12} {rate} {:>5.0}",
-        truncate(name, 16),
-        scope,
-        truncate(project, 16),
-        truncate(source, 10),
-        truncate(author, 12),
-        delete_score
+        "{} {:<16} {:7} {:<16} {:<10} {:<12} {rate} {:>5.0}",
+        row.mark,
+        truncate(row.name, 16),
+        row.scope,
+        truncate(row.project, 16),
+        truncate(row.source, 10),
+        truncate(row.author, 12),
+        row.delete_score
     )
 }
 
@@ -1255,16 +1259,16 @@ mod tests {
         let highlight_pad = " ".repeat(LIST_HIGHLIGHT.chars().count());
         let row = format!(
             "{highlight_pad}{}",
-            format_skill_list_row(
-                "[ ]",
-                "agent-reach",
-                "user",
-                "-",
-                "npx skills",
-                "vercel-labs",
-                Some(0.0),
-                85.0
-            )
+            format_skill_list_row(SkillListRow {
+                mark: "[ ]",
+                name: "agent-reach",
+                scope: "user",
+                project: "-",
+                source: "npx skills",
+                author: "vercel-labs",
+                activation_rate: Some(0.0),
+                delete_score: 85.0,
+            })
         );
         // Same skeleton as the title, with data values in each column.
         let expected_header = format!(
@@ -1307,9 +1311,26 @@ mod tests {
     fn skill_list_rate_column_is_fixed_width() {
         assert_eq!(format_rate_column(Some(0.012)).len(), 6);
         assert_eq!(format_rate_column(None).len(), 6);
-        let with_rate =
-            format_skill_list_row("[ ]", "a", "user", "-", "gh skill", "-", Some(0.012), 10.0);
-        let without = format_skill_list_row("[ ]", "a", "user", "-", "gh skill", "-", None, 10.0);
+        let with_rate = format_skill_list_row(SkillListRow {
+            mark: "[ ]",
+            name: "a",
+            scope: "user",
+            project: "-",
+            source: "gh skill",
+            author: "-",
+            activation_rate: Some(0.012),
+            delete_score: 10.0,
+        });
+        let without = format_skill_list_row(SkillListRow {
+            mark: "[ ]",
+            name: "a",
+            scope: "user",
+            project: "-",
+            source: "gh skill",
+            author: "-",
+            activation_rate: None,
+            delete_score: 10.0,
+        });
         assert_eq!(with_rate.len(), without.len());
     }
 

@@ -36,10 +36,9 @@ pub fn build_inventory(
     let mut warnings = Vec::new();
     let (discovered, scan_warnings) = scan_skills(project_roots, home)?;
     warnings.extend(scan_warnings);
-    let plugin_scan = scan_plugin_inventory(
-        project_roots.first().map(|p| p.as_path()).unwrap_or(home),
-        home,
-    )?;
+    // Plugin / MCP stores live under $HOME. The scanner ignores `project_root`,
+    // so looping every scan root would only duplicate the same user inventory.
+    let plugin_scan = scan_plugin_inventory(home, home)?;
     warnings.extend(plugin_scan.warnings);
     let mut skills = merge_discovered(discovered.into_iter().chain(plugin_scan.skills).collect());
     let plugins = merge_plugins(plugin_scan.plugins);

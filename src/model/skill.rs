@@ -583,10 +583,7 @@ mod tests {
             pinned: false,
             stats: SkillStats::default(),
         };
-        assert_eq!(
-            rec.key(),
-            (String::from("tdd"), Scope::Project, Some(proj))
-        );
+        assert_eq!(rec.key(), (String::from("tdd"), Scope::Project, Some(proj)));
     }
 
     #[test]

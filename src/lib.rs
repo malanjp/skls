@@ -1,7 +1,7 @@
 pub mod adapters;
-pub mod config;
 pub mod analytics;
 pub mod app;
+pub mod config;
 pub mod executor;
 pub mod inventory;
 pub mod model;

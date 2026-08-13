@@ -405,15 +405,15 @@ fn execute_update_npx(
     let mut msgs = Vec::new();
     let mut runnable = Vec::new();
     for job in jobs {
-        if let (Scope::Project, Some(project)) = (job.scope, job.project.as_deref()) {
-            if !crate::config::paths_eq_canonical(project, active_root) {
-                msgs.push(format!(
-                    "npx skills update skipped for {}: project {} is not the active root",
-                    job.name,
-                    project.display()
-                ));
-                continue;
-            }
+        if let (Scope::Project, Some(project)) = (job.scope, job.project.as_deref())
+            && !crate::config::paths_eq_canonical(project, active_root)
+        {
+            msgs.push(format!(
+                "npx skills update skipped for {}: project {} is not the active root",
+                job.name,
+                project.display()
+            ));
+            continue;
         }
         runnable.push(job);
     }
