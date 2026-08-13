@@ -512,7 +512,12 @@ impl App {
         let opts = InventoryOptions {
             use_gh: self.gh_available,
         };
-        let inventory = build_inventory(&self.project_root, &self.home, &runner, &opts)?;
+        let inventory = build_inventory(
+            std::slice::from_ref(&self.project_root),
+            &self.home,
+            &runner,
+            &opts,
+        )?;
         let mut skills = inventory.skills;
         self.warnings = inventory.warnings;
         self.plugins = inventory.plugins;

@@ -30,6 +30,7 @@ impl AddBackend {
 pub struct DeletePlan {
     pub skill_name: String,
     pub scope: Scope,
+    pub project: Option<PathBuf>,
     pub agents: Vec<Agent>,
     pub paths: Vec<std::path::PathBuf>,
     pub source: InstallSource,
@@ -85,6 +86,7 @@ pub fn plan_delete(skill: &SkillRecord, agents: &[Agent]) -> DeletePlan {
     DeletePlan {
         skill_name: skill.name.clone(),
         scope: skill.scope,
+        project: skill.project.clone(),
         agents: agents.to_vec(),
         paths,
         source: skill.source,
@@ -583,6 +585,7 @@ mod tests {
         let plan = DeletePlan {
             skill_name: "find-skills".into(),
             scope: Scope::User,
+            project: None,
             agents: vec![Agent::Cursor, Agent::ClaudeCode],
             paths: vec![skill_dir.clone()],
             source: InstallSource::Npx,
@@ -628,6 +631,7 @@ mod tests {
         let plan = DeletePlan {
             skill_name: "manual".into(),
             scope: Scope::User,
+            project: None,
             agents: vec![Agent::Cursor],
             paths: vec![skill_dir],
             source: InstallSource::Manual,

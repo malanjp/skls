@@ -95,7 +95,8 @@ fn run_delete(
     }
     // Inventory ids are skill directory names (== skill_name).
     for plan in &plans {
-        app.checked.remove(&(plan.skill_name.clone(), plan.scope, None));
+        app.checked
+            .remove(&(plan.skill_name.clone(), plan.scope, plan.project.clone()));
     }
 
     app.set_busy("Refreshing skill list …");
@@ -335,6 +336,50 @@ mod tests {
         assert!(app.checked.is_empty());
         assert!(app.message.contains("removed"));
         assert_eq!(app.mode, crate::app::Mode::Message);
+    }
+
+    #[test]
+    fn delete_unchecks_project_scoped_row() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("proj");
+        let skill_dir = project.join(".agents/skills/alpha");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "---\nname: alpha\n---\n").unwrap();
+
+        let mut app = App::new(project.clone(), tmp.path().join("home"));
+        app.gh_available = false;
+        app.npx_available = false;
+        let mut rec = skill_record("alpha", skill_dir.clone());
+        rec.scope = Scope::Project;
+        rec.project = Some(project.clone());
+        rec.locations[0].scope = Scope::Project;
+        let key: SkillKey = rec.key();
+        app.skills = vec![rec.clone()];
+        app.checked.insert(key);
+        app.recompute_view();
+
+        let plan = crate::ops::plan_delete(&rec, &[Agent::Cursor]);
+        let runner = FakeCommandRunner::default();
+        let mut checked_during_refresh = None;
+        run_pending_action(
+            &mut app,
+            PendingAction::Delete(vec![plan]),
+            &runner,
+            &mut |app| {
+                if app.busy_message.contains("Refreshing") {
+                    checked_during_refresh = Some(app.checked.clone());
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            checked_during_refresh.as_ref().map(|c| c.is_empty()),
+            Some(true),
+            "project row must be unchecked before reload"
+        );
+        assert!(app.checked.is_empty());
     }
 
     #[test]

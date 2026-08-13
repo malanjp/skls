@@ -12,7 +12,7 @@ use crate::model::{
 };
 use anyhow::Result;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Default)]
 pub struct InventoryOptions {
@@ -28,23 +28,26 @@ pub struct Inventory {
 }
 
 pub fn build_inventory(
-    project_root: &Path,
+    project_roots: &[PathBuf],
     home: &Path,
     runner: &impl CommandRunner,
     opts: &InventoryOptions,
 ) -> Result<Inventory> {
     let mut warnings = Vec::new();
-    let (discovered, scan_warnings) = scan_skills(&[project_root.to_path_buf()], home)?;
+    let (discovered, scan_warnings) = scan_skills(project_roots, home)?;
     warnings.extend(scan_warnings);
-    let plugin_scan = scan_plugin_inventory(project_root, home)?;
+    let plugin_scan = scan_plugin_inventory(
+        project_roots.first().map(|p| p.as_path()).unwrap_or(home),
+        home,
+    )?;
     warnings.extend(plugin_scan.warnings);
     let mut skills = merge_discovered(discovered.into_iter().chain(plugin_scan.skills).collect());
     let plugins = merge_plugins(plugin_scan.plugins);
     let mcp = merge_mcp(plugin_scan.mcp);
 
     // Fast path: npx skills lockfile (no process spawn).
-    for (scope, lock) in load_locks(project_root, home) {
-        enrich_with_skill_lock(&mut skills, &lock, scope);
+    for (scope, project, lock) in load_locks(project_roots, home) {
+        enrich_with_skill_lock(&mut skills, &lock, scope, project.as_deref());
     }
 
     if opts.use_gh {
@@ -71,13 +74,17 @@ pub fn merge_discovered(discovered: Vec<DiscoveredSkill>) -> Vec<SkillRecord> {
     let mut map: HashMap<SkillKey, SkillRecord> = HashMap::new();
 
     for d in discovered {
-        let key = (normalize_skill_id(&d.id, &d.name), d.location.scope, None);
+        let key = (
+            normalize_skill_id(&d.id, &d.name),
+            d.location.scope,
+            d.project.clone(),
+        );
         let entry = map.entry(key.clone()).or_insert_with(|| SkillRecord {
             id: key.0.clone(),
             name: d.name.clone(),
             description: d.description.clone(),
             scope: d.location.scope,
-            project: None,
+            project: d.project.clone(),
             agents: Vec::new(),
             locations: Vec::new(),
             install_kind: d.location.kind,
@@ -291,9 +298,14 @@ fn gh_item_matches(rec: &SkillRecord, item: &GhSkillListItem, scope: Scope) -> b
     })
 }
 
-pub fn enrich_with_skill_lock(records: &mut [SkillRecord], lock: &SkillLock, scope: Scope) {
+pub fn enrich_with_skill_lock(
+    records: &mut [SkillRecord],
+    lock: &SkillLock,
+    scope: Scope,
+    project: Option<&Path>,
+) {
     for rec in records.iter_mut() {
-        if rec.scope != scope {
+        if rec.scope != scope || rec.project.as_deref() != project {
             continue;
         }
         let entry = lock_entry_for(lock, rec);
@@ -467,6 +479,36 @@ mod tests {
         }
     }
 
+    fn disc_in_project(name: &str, agent: Agent, project: PathBuf) -> DiscoveredSkill {
+        let mut d = disc(name, agent, Scope::Project);
+        d.project = Some(project.clone());
+        d.location.path = project.join(".agents/skills").join(name);
+        d
+    }
+
+    #[test]
+    fn merge_keeps_same_name_in_different_projects_apart() {
+        let records = merge_discovered(vec![
+            disc_in_project("tdd", Agent::Cursor, PathBuf::from("/a")),
+            disc_in_project("tdd", Agent::Cursor, PathBuf::from("/b")),
+        ]);
+        assert_eq!(records.len(), 2);
+        let mut projects: Vec<_> = records.iter().filter_map(|r| r.project.clone()).collect();
+        projects.sort();
+        assert_eq!(projects, vec![PathBuf::from("/a"), PathBuf::from("/b")]);
+    }
+
+    #[test]
+    fn merge_still_collapses_user_copies_across_agents() {
+        let records = merge_discovered(vec![
+            disc("tdd", Agent::Cursor, Scope::User),
+            disc("tdd", Agent::ClaudeCode, Scope::User),
+        ]);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].project, None);
+        assert_eq!(records[0].agents.len(), 2);
+    }
+
     #[test]
     fn merges_same_skill_across_agents() {
         let records = merge_discovered(vec![
@@ -517,7 +559,7 @@ mod tests {
                 source_type: "github".into(),
             },
         );
-        enrich_with_skill_lock(&mut records, &lock, Scope::User);
+        enrich_with_skill_lock(&mut records, &lock, Scope::User, None);
         retain_plugin_source(&mut records[0]);
         assert_eq!(records[0].source, InstallSource::Npx);
     }
@@ -534,7 +576,7 @@ mod tests {
                 source_type: "github".into(),
             },
         );
-        enrich_with_skill_lock(&mut records, &lock, Scope::User);
+        enrich_with_skill_lock(&mut records, &lock, Scope::User, None);
         assert_eq!(records[0].author.as_deref(), Some("vercel-labs"));
     }
 
@@ -636,7 +678,7 @@ mod tests {
                 source_type: "github".into(),
             },
         );
-        enrich_with_skill_lock(&mut records, &lock, Scope::User);
+        enrich_with_skill_lock(&mut records, &lock, Scope::User, None);
         let find = records.iter().find(|r| r.name == "find-skills").unwrap();
         let tdd = records.iter().find(|r| r.name == "tdd").unwrap();
         assert_eq!(find.source, InstallSource::Npx);
@@ -679,7 +721,7 @@ mod tests {
 
         let runner = crate::adapters::command::FakeCommandRunner::default();
         let inventory =
-            build_inventory(&project, &home, &runner, &InventoryOptions::default()).unwrap();
+            build_inventory(&[project], &home, &runner, &InventoryOptions::default()).unwrap();
         let records = inventory.skills;
 
         let tdd = records.iter().find(|r| r.name == "tdd").unwrap();
@@ -715,7 +757,7 @@ mod tests {
 
         let runner = crate::adapters::command::FakeCommandRunner::default();
         let inventory =
-            build_inventory(&project, &home, &runner, &InventoryOptions::default()).unwrap();
+            build_inventory(&[project], &home, &runner, &InventoryOptions::default()).unwrap();
         assert!(inventory.plugins.iter().any(|p| p.name == "context7"));
         assert!(inventory.mcp.iter().any(|m| m.name == "docs"));
     }
