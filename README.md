@@ -16,7 +16,7 @@ See which skills are installed, where they apply, and whether they are used — 
 ## Features
 
 - **Inventory**: 27 agent hosts (Cursor loads `~/.agents/skills` too). Scans skills bundled in Claude Code / Cursor / Codex / agents plugins. Filter by project / user scope and agent; multi-select for bulk actions
-- **Views**: `t` cycles **skills → plugins → MCP**. Plugin packages and bundled MCP servers (`mcp.json`) show in the same TUI
+- **Sidebar**: left nav splits the list into **manual** (plus plugin-bundled skills) / **gh** / **npx** / **plugins** / **mcp**. `h`/`l` (or Tab) move focus; `j`/`k` on the sidebar changes category; `t` still cycles
 - **Metrics**: Compute activation rate from conversation logs and show a delete-recommendation score (`delete_score`)
 - **Add**: Skills via `gh skill` / `npx skills`. Plugins via `claude plugin` / `copilot plugin` / `codex plugin` (Cursor has no catalog CLI)
 - **Delete**: Remove inventory paths (confirmation required). npx-sourced skills also run `npx skills remove`. Plugin delete uses the host catalog CLI first. Warns on shared-store and plugin paths
@@ -66,7 +66,7 @@ On startup the skill list appears first, then activation is sampled. With defaul
 
 ## Screen
 
-`t` cycles the list: **skills → plugins → MCP**. List on the left, detail on the right. `[ ]` / `[x]` mark multi-select.
+The left sidebar splits the inventory: **manual** (plus plugin-bundled skills) · **gh** · **npx** · **plugins** · **mcp**. List in the center, detail on the right. `h`/`l` (or Tab) move focus between sidebar and list. `[ ]` / `[x]` mark multi-select.
 
 **Skills** columns: `NAME` · `SCOPE` · `SRC` (`plugin` / `gh skill` / `npx skills` / `manual`) · `AUTHOR` · `RATE` · `SCORE`. Default sort is `delete_score` descending (higher = stronger delete candidate). `S` toggles asc/desc; cycling with `s` resets to that key's default direction. Author comes from the SKILL.md frontmatter, the plugin manifest, or the GitHub owner of the source repo.
 
@@ -80,12 +80,13 @@ On startup the skill list appears first, then activation is sampled. With defaul
 
 | Key | Action |
 |-----|--------|
-| `j` / `k` | Move |
-| `Ctrl+F` / `PgDn` | Page down (no wrap) |
-| `Ctrl+B` / `PgUp` | Page up (no wrap) |
-| `gg` / `Home` | Jump to first row |
-| `L` / `Ctrl+L` / `End` | Jump to last row |
-| `t` | Cycle view (skills → plugins → mcp) |
+| `h` / `l` | Focus sidebar / list (`Tab` toggles) |
+| `j` / `k` | Move (sidebar or list) |
+| `Ctrl+F` / `PgDn` | Page down (no wrap; list) |
+| `Ctrl+B` / `PgUp` | Page up (no wrap; list) |
+| `gg` / `Home` | Jump to first row (list) / first nav item (sidebar) |
+| `L` / `Ctrl+L` / `End` | Jump to last row (list) / last nav item (sidebar) |
+| `t` | Cycle sidebar (manual → gh → npx → plugins → mcp) |
 | `Space` | Toggle row selection |
 | `*` | Select / clear all visible |
 | `x` | Clear selection |
@@ -93,7 +94,7 @@ On startup the skill list appears first, then activation is sampled. With defaul
 | `f` | Filter panel |
 | `s` | Cycle sort key (`name` → `rate` → `delete_score` → `last_hit` → `author` → `source`); resets direction to that key's default |
 | `S` | Toggle sort direction (asc / desc) |
-| `a` | Add flow (skills: `gh`/`npx`; plugins: catalog CLI) |
+| `a` | Add flow (manual: pick `gh`/`npx`; gh/npx nav: that backend; plugins: catalog CLI) |
 | `d` | Delete confirm (selection if any, else current row) |
 | `u` | Update |
 | `r` | Light rescan (list only) |
@@ -113,16 +114,18 @@ On startup the skill list appears first, then activation is sampled. With defaul
 
 ### Add (`a`)
 
-On the **skills** view, step through dialogs. `Esc` goes back one step; `q` cancels.
+On the **manual** nav, step through dialogs. `Esc` goes back one step; `q` cancels.
 
 1. Backend: `1`/`g` = `gh skill`, `2`/`n` = `npx skills`
 2. Source (gh: search query; npx: `owner/repo` or `owner/repo@skill`)
 3. Pick result (gh only)
 4. Agents (`j`/`k` move, `Space` toggle, `*` all, `x` none; `Enter` next) → scope (`p`/`u`) to run
 
-On the **plugins** view, enter a catalog spec (`name@marketplace`), pick hosts that have a plugin CLI (`claude-code` / `copilot` / `codex`), then scope. Cursor has no catalog CLI — install from the host marketplace.
+On the **gh** / **npx** nav, the backend picker is skipped and that installer is used directly.
 
-On the **MCP** view, `a` / `u` point you at the plugins view (servers are bundled in plugins).
+On the **plugins** nav, enter a catalog spec (`name@marketplace`), pick hosts that have a plugin CLI (`claude-code` / `copilot` / `codex`), then scope. Cursor has no catalog CLI — install from the host marketplace.
+
+On the **mcp** nav, `a` / `u` point you at the plugins sidebar item (servers are bundled in plugins).
 
 ### Delete (`d`)
 

@@ -10,13 +10,15 @@
 
 ### ハイライト
 
-- **MCP 一覧** — `t` で skills → plugins → MCP を切替。プラグインの `mcp.json` / `.mcp.json` から同梱サーバーを読む（Agent Plugins 1.0、および `command` / `url` だけの緩め形式）
+- **左サイドバー** — manual / gh / npx / plugins / mcp で一覧を分割。`h`/`l`（Tab）でフォーカス、サイドバー上の `j`/`k` で切替。`t` でも循環。スキルは出所で排他分割（manual はプラグイン同梱も含む、gh / npx はそれぞれのインストーラ）
+- **MCP 一覧** — プラグインの `mcp.json` / `.mcp.json` から同梱サーバーを読む（Agent Plugins 1.0、および `command` / `url` だけの緩め形式）
 - **プラグインカタログ操作** — `claude plugin` / `copilot plugin` / `codex plugin` から追加・更新・削除。Cursor にカタログ CLI は無い（ホストの marketplace から入れる）。一覧はこれらのバイナリ無しでも動く
 - **ページ送りとソート方向** — `Ctrl+F` / `Ctrl+B`（および PageDown / PageUp）でページ移動。`gg` / `Home` で先頭、`L` / `Ctrl+L` / `End` で末尾へ。`S` で昇順/降順を切替
 
 ### 追加
 
-- インストール済みプラグインパッケージと同梱 MCP サーバーの一覧（`t` で切替）。プラグイン列: `NAME` / `SCOPE` / `MARKET` / `SK` / `MCP`。MCP 列: `NAME` / `TRANS` / `PLUGIN` / `AGENTS`
+- 左サイドバー（`nav`）: `manual` / `gh` / `npx` / `plugins` / `mcp`。件数付き。`h`/`l` または Tab でフォーカス。gh / npx ナビからの追加は backend 選択を飛ばす
+- インストール済みプラグインパッケージと同梱 MCP サーバーの一覧。プラグイン列: `NAME` / `SCOPE` / `MARKET` / `SK` / `MCP`。MCP 列: `NAME` / `TRANS` / `PLUGIN` / `AGENTS`
 - ホストのカタログ CLI によるプラグインの追加・更新・削除（`claude plugin install|update|uninstall`、`copilot plugin install|update|uninstall`、`codex plugin add|remove`）。Codex の更新は `plugin add` の再実行。uninstall の CLI がすべて失敗したときだけパスをフォールバックで消す
 - `--dump-json` の出力をスキル配列から `{ skills, plugins, mcp_servers }` に変更
 - スキル一覧の `SRC` を `plugin` / `gh skill` / `npx skills` / `manual` と明示。プラグインコピーがあっても lockfile / `~/.agents/skills` / `gh skill list` があれば `npx skills` / `gh skill` を優先。プラグイン内だけのパスは `plugin` のまま

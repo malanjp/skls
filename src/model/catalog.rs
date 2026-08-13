@@ -1,6 +1,6 @@
 //! Plugin packages and MCP servers shown alongside skills.
 
-use crate::model::{Agent, Scope, SkillLocation, agents_label};
+use crate::model::{Agent, InstallSource, Scope, SkillLocation, SkillRecord, agents_label};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListView {
@@ -23,6 +23,79 @@ impl ListView {
             ListView::Skills => "skills",
             ListView::Plugins => "plugins",
             ListView::Mcp => "mcp",
+        }
+    }
+}
+
+/// Left-sidebar categories. Skills are partitioned by install source so each
+/// row lives in one place: manual (plus plugin-bundled), gh, or npx.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NavItem {
+    Manual,
+    Gh,
+    Npx,
+    Plugins,
+    Mcp,
+}
+
+impl NavItem {
+    pub const ALL: [NavItem; 5] = [
+        NavItem::Manual,
+        NavItem::Gh,
+        NavItem::Npx,
+        NavItem::Plugins,
+        NavItem::Mcp,
+    ];
+
+    pub fn next(self) -> Self {
+        Self::from_index(self.index() + 1)
+    }
+
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|&item| item == self).unwrap_or(0)
+    }
+
+    pub fn from_index(i: usize) -> Self {
+        Self::ALL[i % Self::ALL.len()]
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NavItem::Manual => "manual",
+            NavItem::Gh => "gh",
+            NavItem::Npx => "npx",
+            NavItem::Plugins => "plugins",
+            NavItem::Mcp => "mcp",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            NavItem::Manual => "manual",
+            NavItem::Gh => "gh",
+            NavItem::Npx => "npx",
+            NavItem::Plugins => "plugins",
+            NavItem::Mcp => "mcp",
+        }
+    }
+
+    pub fn list_view(self) -> ListView {
+        match self {
+            NavItem::Manual | NavItem::Gh | NavItem::Npx => ListView::Skills,
+            NavItem::Plugins => ListView::Plugins,
+            NavItem::Mcp => ListView::Mcp,
+        }
+    }
+
+    /// Whether a skill belongs in this sidebar category.
+    pub fn matches_skill(self, skill: &SkillRecord) -> bool {
+        match self {
+            NavItem::Manual => {
+                matches!(skill.source, InstallSource::Manual | InstallSource::Plugin)
+            }
+            NavItem::Gh => skill.source == InstallSource::Gh,
+            NavItem::Npx => skill.source == InstallSource::Npx,
+            NavItem::Plugins | NavItem::Mcp => false,
         }
     }
 }
@@ -189,6 +262,49 @@ mod tests {
         assert_eq!(ListView::Skills.next(), ListView::Plugins);
         assert_eq!(ListView::Plugins.next(), ListView::Mcp);
         assert_eq!(ListView::Mcp.next(), ListView::Skills);
+    }
+
+    #[test]
+    fn nav_item_cycles_and_maps_list_view() {
+        assert_eq!(NavItem::Manual.next(), NavItem::Gh);
+        assert_eq!(NavItem::Gh.next(), NavItem::Npx);
+        assert_eq!(NavItem::Npx.next(), NavItem::Plugins);
+        assert_eq!(NavItem::Plugins.next(), NavItem::Mcp);
+        assert_eq!(NavItem::Mcp.next(), NavItem::Manual);
+        assert_eq!(NavItem::Manual.list_view(), ListView::Skills);
+        assert_eq!(NavItem::Gh.list_view(), ListView::Skills);
+        assert_eq!(NavItem::Plugins.list_view(), ListView::Plugins);
+        assert_eq!(NavItem::Mcp.list_view(), ListView::Mcp);
+        assert_eq!(NavItem::from_index(NavItem::Npx.index()), NavItem::Npx);
+    }
+
+    #[test]
+    fn nav_item_partitions_skills_by_source() {
+        let mut skill = SkillRecord {
+            id: "x".into(),
+            name: "x".into(),
+            description: String::new(),
+            scope: Scope::User,
+            agents: vec![],
+            locations: vec![],
+            install_kind: crate::model::InstallKind::Copy,
+            source: InstallSource::Manual,
+            source_url: None,
+            author: None,
+            version: None,
+            pinned: false,
+            stats: crate::model::SkillStats::default(),
+        };
+        assert!(NavItem::Manual.matches_skill(&skill));
+        assert!(!NavItem::Gh.matches_skill(&skill));
+        skill.source = InstallSource::Plugin;
+        assert!(NavItem::Manual.matches_skill(&skill));
+        skill.source = InstallSource::Gh;
+        assert!(NavItem::Gh.matches_skill(&skill));
+        assert!(!NavItem::Manual.matches_skill(&skill));
+        skill.source = InstallSource::Npx;
+        assert!(NavItem::Npx.matches_skill(&skill));
+        assert!(!NavItem::Plugins.matches_skill(&skill));
     }
 
     #[test]
