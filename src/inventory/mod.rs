@@ -34,7 +34,7 @@ pub fn build_inventory(
     opts: &InventoryOptions,
 ) -> Result<Inventory> {
     let mut warnings = Vec::new();
-    let (discovered, scan_warnings) = scan_skills(project_root, home)?;
+    let (discovered, scan_warnings) = scan_skills(&[project_root.to_path_buf()], home)?;
     warnings.extend(scan_warnings);
     let plugin_scan = scan_plugin_inventory(project_root, home)?;
     warnings.extend(plugin_scan.warnings);
@@ -463,6 +463,7 @@ mod tests {
             version: None,
             pinned: false,
             source: None,
+            project: None,
         }
     }
 
@@ -737,6 +738,7 @@ mod tests {
             version: None,
             pinned: false,
             source: None,
+            project: None,
         }]);
         enrich_with_gh(
             &mut records,

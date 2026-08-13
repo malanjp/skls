@@ -255,6 +255,7 @@ fn ingest_plugin_dir(
         &plugin_dir.join("skills"),
         agent,
         scope,
+        None,
         &mut local,
         seen,
         &mut scan.warnings,
