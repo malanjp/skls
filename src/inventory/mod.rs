@@ -1,14 +1,14 @@
 //! Merge FS discoveries with gh skill metadata into SkillRecords.
 
-use crate::adapters::fs::{scan_skills, DiscoveredSkill};
+use crate::adapters::CommandRunner;
+use crate::adapters::fs::{DiscoveredSkill, scan_skills};
 use crate::adapters::gh_skill::{GhSkillCli, GhSkillListItem};
 use crate::adapters::mcp::DiscoveredMcp;
-use crate::adapters::plugin::{scan_plugin_inventory, DiscoveredPlugin};
-use crate::adapters::skill_lock::{load_locks, SkillLock};
-use crate::adapters::CommandRunner;
+use crate::adapters::plugin::{DiscoveredPlugin, scan_plugin_inventory};
+use crate::adapters::skill_lock::{SkillLock, load_locks};
 use crate::model::{
-    github_owner, normalize_skill_id, Agent, InstallKind, InstallSource, McpServerRecord,
-    PluginRecord, Scope, SkillKey, SkillLocation, SkillRecord, SkillStats,
+    Agent, InstallKind, InstallSource, McpServerRecord, PluginRecord, Scope, SkillKey,
+    SkillLocation, SkillRecord, SkillStats, github_owner, normalize_skill_id,
 };
 use anyhow::Result;
 use std::collections::HashMap;
@@ -277,6 +277,11 @@ fn gh_item_matches(rec: &SkillRecord, item: &GhSkillListItem, scope: Scope) -> b
     if rec.scope != scope {
         return false;
     }
+    // Plugin-attributed project rows have scope=Project but project=None.
+    // Name-only match would let them steal gh items meant for FS project rows.
+    if rec.scope == Scope::Project && rec.project.is_none() {
+        return gh_item_matches_location(rec, item, true);
+    }
     if rec.project.is_some() {
         return gh_item_matches_project_row(rec, item);
     }
@@ -449,11 +454,7 @@ fn prefer_source(a: InstallSource, b: InstallSource) -> InstallSource {
         InstallSource::Plugin => 1,
         InstallSource::Manual => 0,
     };
-    if rank(b) > rank(a) {
-        b
-    } else {
-        a
-    }
+    if rank(b) > rank(a) { b } else { a }
 }
 
 /// Skills whose inventory paths all live inside a plugin stay `plugin`,
@@ -757,10 +758,11 @@ mod tests {
 
         let tdd = records.iter().find(|r| r.name == "tdd").unwrap();
         assert_eq!(tdd.locations.len(), 2);
-        assert!(tdd
-            .locations
-            .iter()
-            .any(|l| l.agent == Agent::ClaudeCode && l.path.ends_with(".claude/skills/tdd")));
+        assert!(
+            tdd.locations
+                .iter()
+                .any(|l| l.agent == Agent::ClaudeCode && l.path.ends_with(".claude/skills/tdd"))
+        );
         assert!(tdd.locations.iter().any(
             |l| l.agent == Agent::ClaudeCode && l.path.to_string_lossy().contains("/plugins/")
         ));
@@ -906,5 +908,44 @@ mod tests {
         assert_eq!(tdd.source, InstallSource::Gh);
         assert_eq!(aaa.source_url, None);
         assert_ne!(aaa.source, InstallSource::Gh);
+    }
+
+    #[test]
+    fn enrich_gh_does_not_let_plugin_project_row_steal_item() {
+        let mut plugin = disc("tdd", Agent::ClaudeCode, Scope::Project);
+        plugin.location.path = PathBuf::from("/home/.claude/plugins/cache/m/sp/1.0.0/skills/tdd");
+        plugin.source = Some(InstallSource::Plugin);
+        let mut fs = disc_in_project("tdd", Agent::Cursor, PathBuf::from("/a"));
+        fs.location.path = PathBuf::from("/a/.cursor/skills/tdd");
+        let mut records = merge_discovered(vec![plugin, fs]);
+        records.sort_by(|a, b| a.project.cmp(&b.project));
+        assert!(
+            records[0].project.is_none(),
+            "plugin-style row (project=None) must be first"
+        );
+
+        enrich_with_gh(
+            &mut records,
+            &[GhSkillListItem {
+                skill_name: "tdd".into(),
+                path: "/a/.cursor/skills/tdd".into(),
+                scope: "project".into(),
+                source_url: "https://github.com/ex/skills".into(),
+                version: "v1".into(),
+                pinned: false,
+                agent_hosts: vec!["cursor".into()],
+            }],
+        );
+
+        let plugin_row = records.iter().find(|r| r.project.is_none()).unwrap();
+        let a = records
+            .iter()
+            .find(|r| r.project.as_deref() == Some(Path::new("/a")))
+            .unwrap();
+        assert_eq!(
+            a.source_url.as_deref(),
+            Some("https://github.com/ex/skills")
+        );
+        assert_eq!(plugin_row.source_url, None);
     }
 }

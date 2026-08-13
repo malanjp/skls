@@ -1731,6 +1731,7 @@ impl App {
                 name: s.name.clone(),
                 scope: s.scope,
                 dirs: prefer_update_dirs(s, &agents),
+                project: s.project.clone(),
             })
             .collect();
         if self.update_jobs.is_empty() {

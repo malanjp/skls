@@ -88,7 +88,7 @@ fn run_delete(
     let mut msgs = Vec::new();
     let mut errors = Vec::new();
     for plan in &plans {
-        match execute_delete(runner, plan, app.npx_available) {
+        match execute_delete(runner, plan, app.npx_available, &app.project_root) {
             Ok(m) => msgs.extend(m),
             Err(err) => errors.push(format!("{}: {err}", plan.skill_name)),
         }
@@ -133,7 +133,7 @@ fn run_update(
     app.set_busy(label);
     redraw(app)?;
 
-    let msg = match execute_update(runner, backend, &jobs) {
+    let msg = match execute_update(runner, backend, &jobs, &app.project_root) {
         Ok(m) => m,
         Err(err) => format!("update failed: {err}"),
     };
