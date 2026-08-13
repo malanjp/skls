@@ -430,6 +430,7 @@ mod tests {
             name: "Find Skills".into(),
             description: String::new(),
             scope: Scope::User,
+            project: None,
             agents: vec![Agent::Cursor],
             locations: vec![],
             install_kind: InstallKind::Copy,

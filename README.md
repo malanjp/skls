@@ -64,11 +64,26 @@ skls --dump-json                     # print inventory JSON: { skills, plugins, 
 
 On startup the skill list appears first, then activation is sampled. With defaults, the list usually shows within about 1–2 seconds.
 
+### Project directories
+
+`skls` treats extra folders in `~/.config/skls/config.toml` (`$XDG_CONFIG_HOME/skls/config.toml` when set) as project-scope scan roots, in addition to the current directory (or `--project-root`).
+
+```toml
+projects = [
+  "~/src/my-app",
+  "/abs/path/to/other-app",
+]
+```
+
+If the current directory (or `--project-root`) is your home directory, it is not scanned as a project. Listed paths still are. Skills with the same name in different projects show as separate rows. The list `PROJECT` column is the directory name; user-scope rows show `-`.
+
+Project-scope add still targets only the active root (cwd / `--project-root`). If that root is home, choose user scope or pass `--project-root`.
+
 ## Screen
 
 The left sidebar splits the inventory: **manual** (plus plugin-bundled skills) · **gh** · **npx** · **plugins** · **mcp**. List in the center, detail on the right. `h`/`l` (or Tab) move focus between sidebar and list. `[ ]` / `[x]` mark multi-select.
 
-**Skills** columns: `NAME` · `SCOPE` · `SRC` (`plugin` / `gh skill` / `npx skills` / `manual`) · `AUTHOR` · `RATE` · `SCORE`. Default sort is `delete_score` descending (higher = stronger delete candidate). `S` toggles asc/desc; cycling with `s` resets to that key's default direction. Author comes from the SKILL.md frontmatter, the plugin manifest, or the GitHub owner of the source repo.
+**Skills** columns: `NAME` · `SCOPE` · `PROJECT` · `SRC` (`plugin` / `gh skill` / `npx skills` / `manual`) · `AUTHOR` · `RATE` · `SCORE`. Default sort is `delete_score` descending (higher = stronger delete candidate). `S` toggles asc/desc; cycling with `s` resets to that key's default direction. Author comes from the SKILL.md frontmatter, the plugin manifest, or the GitHub owner of the source repo.
 
 **Plugins** columns: `NAME` · `SCOPE` · `MARKET` · `SK` (bundled skills) · `MCP`.
 

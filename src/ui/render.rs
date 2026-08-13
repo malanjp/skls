@@ -9,6 +9,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Clear, HighlightSpacing, List, ListItem, Paragraph, Wrap};
+use std::path::PathBuf;
 
 /// Highlight symbol for skill / search lists. ASCII so display width is stable
 /// across fonts (▶ is Ambiguous-width and often shifts columns in screenshots).
@@ -186,15 +187,17 @@ fn skill_list_content(app: &App) -> (Vec<ListItem<'static>>, String, String) {
         .map(|&skill_i| {
             let s = &app.skills[skill_i];
             let mark = if app.is_checked(s) { "[x]" } else { "[ ]" };
-            let line = format_skill_list_row(
+            let project = project_column_label(s.project.as_ref());
+            let line = format_skill_list_row(SkillListRow {
                 mark,
-                &s.name,
-                s.scope.as_str(),
-                s.source.label(),
-                s.author.as_deref().unwrap_or("-"),
-                s.stats.activation_rate,
-                s.stats.delete_score,
-            );
+                name: &s.name,
+                scope: s.scope.as_str(),
+                project: &project,
+                source: s.source.label(),
+                author: s.author.as_deref().unwrap_or("-"),
+                activation_rate: s.stats.activation_rate,
+                delete_score: s.stats.delete_score,
+            });
             ListItem::new(Line::from(line))
         })
         .collect();
@@ -222,6 +225,7 @@ fn skill_list_content(app: &App) -> (Vec<ListItem<'static>>, String, String) {
                 "{}\n\
                  ────────────────\n\
                  scope      {}\n\
+                 project    {}\n\
                  agents     {}\n\
                  source     {}\n\
                  kind       {}\n\
@@ -242,6 +246,10 @@ fn skill_list_content(app: &App) -> (Vec<ListItem<'static>>, String, String) {
                  {}",
                 s.name,
                 s.scope,
+                s.project
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "-".into()),
                 s.agents_label(),
                 s.source,
                 s.install_kind,
@@ -1124,26 +1132,40 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
-/// Format one skill inventory row.
-/// Columns: mark(3) name(16) scope(7) src(10) author(12) rate(6) score(5).
-fn format_skill_list_row(
-    mark: &str,
-    name: &str,
-    scope: &str,
-    source: &str,
-    author: &str,
+struct SkillListRow<'a> {
+    mark: &'a str,
+    name: &'a str,
+    scope: &'a str,
+    project: &'a str,
+    source: &'a str,
+    author: &'a str,
     activation_rate: Option<f64>,
     delete_score: f64,
-) -> String {
-    let rate = format_rate_column(activation_rate);
+}
+
+/// Format one skill inventory row.
+/// Columns: mark(3) name(16) scope(7) project(16) src(10) author(12) rate(6) score(5).
+fn format_skill_list_row(row: SkillListRow<'_>) -> String {
+    let rate = format_rate_column(row.activation_rate);
     format!(
-        "{mark} {:<16} {:7} {:<10} {:<12} {rate} {:>5.0}",
-        truncate(name, 16),
-        scope,
-        truncate(source, 10),
-        truncate(author, 12),
-        delete_score
+        "{} {:<16} {:7} {:<16} {:<10} {:<12} {rate} {:>5.0}",
+        row.mark,
+        truncate(row.name, 16),
+        row.scope,
+        truncate(row.project, 16),
+        truncate(row.source, 10),
+        truncate(row.author, 12),
+        row.delete_score
     )
+}
+
+fn project_column_label(project: Option<&PathBuf>) -> String {
+    project
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "-".into())
 }
 
 fn format_rate_column(activation_rate: Option<f64>) -> String {
@@ -1158,8 +1180,8 @@ fn skill_list_title(checked_count: usize) -> String {
     // (HighlightSpacing::Always reserves that gutter for every row).
     let highlight_pad = " ".repeat(LIST_HIGHLIGHT.chars().count());
     let cols = format!(
-        "{highlight_pad}{:<3} {:<16} {:7} {:<10} {:<12} {:>6} {:>5}",
-        "", "NAME", "SCOPE", "SRC", "AUTHOR", "RATE", "SCORE"
+        "{highlight_pad}{:<3} {:<16} {:7} {:<16} {:<10} {:<12} {:>6} {:>5}",
+        "", "NAME", "SCOPE", "PROJECT", "SRC", "AUTHOR", "RATE", "SCORE"
     );
     if checked_count > 0 {
         format!("{cols}  ({checked_count} selected) ")
@@ -1237,24 +1259,25 @@ mod tests {
         let highlight_pad = " ".repeat(LIST_HIGHLIGHT.chars().count());
         let row = format!(
             "{highlight_pad}{}",
-            format_skill_list_row(
-                "[ ]",
-                "agent-reach",
-                "user",
-                "npx skills",
-                "vercel-labs",
-                Some(0.0),
-                85.0
-            )
+            format_skill_list_row(SkillListRow {
+                mark: "[ ]",
+                name: "agent-reach",
+                scope: "user",
+                project: "-",
+                source: "npx skills",
+                author: "vercel-labs",
+                activation_rate: Some(0.0),
+                delete_score: 85.0,
+            })
         );
         // Same skeleton as the title, with data values in each column.
         let expected_header = format!(
-            "{highlight_pad}{:<3} {:<16} {:7} {:<10} {:<12} {:>6} {:>5} ",
-            "", "NAME", "SCOPE", "SRC", "AUTHOR", "RATE", "SCORE"
+            "{highlight_pad}{:<3} {:<16} {:7} {:<16} {:<10} {:<12} {:>6} {:>5} ",
+            "", "NAME", "SCOPE", "PROJECT", "SRC", "AUTHOR", "RATE", "SCORE"
         );
         assert_eq!(skill_list_title(0), expected_header);
 
-        // Column starts: name / scope / src / author / rate / score.
+        // Column starts: name / scope / project / src / author / rate / score.
         let name_at = highlight_pad.len() + 4; // "[ ] "
         assert_eq!(&row[name_at..name_at + 11], "agent-reach");
         assert_eq!(&expected_header[name_at..name_at + 4], "NAME");
@@ -1263,7 +1286,11 @@ mod tests {
         assert_eq!(&row[scope_at..scope_at + 4], "user");
         assert_eq!(&expected_header[scope_at..scope_at + 5], "SCOPE");
 
-        let src_at = scope_at + 7 + 1;
+        let project_at = scope_at + 7 + 1;
+        assert_eq!(&row[project_at..project_at + 1], "-");
+        assert_eq!(&expected_header[project_at..project_at + 7], "PROJECT");
+
+        let src_at = project_at + 16 + 1;
         assert_eq!(&row[src_at..src_at + 10], "npx skills");
         assert_eq!(&expected_header[src_at..src_at + 3], "SRC");
 
@@ -1284,9 +1311,26 @@ mod tests {
     fn skill_list_rate_column_is_fixed_width() {
         assert_eq!(format_rate_column(Some(0.012)).len(), 6);
         assert_eq!(format_rate_column(None).len(), 6);
-        let with_rate =
-            format_skill_list_row("[ ]", "a", "user", "gh skill", "-", Some(0.012), 10.0);
-        let without = format_skill_list_row("[ ]", "a", "user", "gh skill", "-", None, 10.0);
+        let with_rate = format_skill_list_row(SkillListRow {
+            mark: "[ ]",
+            name: "a",
+            scope: "user",
+            project: "-",
+            source: "gh skill",
+            author: "-",
+            activation_rate: Some(0.012),
+            delete_score: 10.0,
+        });
+        let without = format_skill_list_row(SkillListRow {
+            mark: "[ ]",
+            name: "a",
+            scope: "user",
+            project: "-",
+            source: "gh skill",
+            author: "-",
+            activation_rate: None,
+            delete_score: 10.0,
+        });
         assert_eq!(with_rate.len(), without.len());
     }
 

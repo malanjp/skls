@@ -30,6 +30,7 @@ impl AddBackend {
 pub struct DeletePlan {
     pub skill_name: String,
     pub scope: Scope,
+    pub project: Option<PathBuf>,
     pub agents: Vec<Agent>,
     pub paths: Vec<std::path::PathBuf>,
     pub source: InstallSource,
@@ -85,6 +86,7 @@ pub fn plan_delete(skill: &SkillRecord, agents: &[Agent]) -> DeletePlan {
     DeletePlan {
         skill_name: skill.name.clone(),
         scope: skill.scope,
+        project: skill.project.clone(),
         agents: agents.to_vec(),
         paths,
         source: skill.source,
@@ -97,6 +99,7 @@ pub fn execute_delete(
     runner: &impl CommandRunner,
     plan: &DeletePlan,
     npx_available: bool,
+    active_root: &Path,
 ) -> Result<Vec<String>> {
     let mut messages = Vec::new();
 
@@ -111,30 +114,46 @@ pub fn execute_delete(
 
     // For npx-sourced skills, always run `npx skills remove` too so the lockfile
     // / shared store stay consistent (not only when inventory paths are empty).
+    // Project-scope npx without `-g` mutates process cwd — skip when the plan
+    // belongs to a different project than the active root.
     if npx_available && plan.source == InstallSource::Npx {
-        let cli = NpxSkillsCli { runner };
-        if plan.agents.is_empty() {
-            messages.push(format!(
-                "npx skills remove skipped for {}: no agents selected",
-                plan.skill_name
-            ));
-        } else {
-            for agent in &plan.agents {
-                match cli.remove(&plan.skill_name, *agent, plan.scope) {
-                    Ok(out) => {
-                        let detail = out.stdout.trim();
-                        if detail.is_empty() {
-                            messages
-                                .push(format!("npx skills remove {} @{}", plan.skill_name, agent));
-                        } else {
-                            messages.push(format!(
-                                "npx skills remove {} @{}: {detail}",
-                                plan.skill_name, agent
-                            ));
+        match (plan.scope, plan.project.as_deref()) {
+            (Scope::Project, Some(project))
+                if !crate::config::paths_eq_canonical(project, active_root) =>
+            {
+                messages.push(format!(
+                    "npx skills remove skipped for {}: project {} is not the active root",
+                    plan.skill_name,
+                    project.display()
+                ));
+            }
+            _ if plan.agents.is_empty() => {
+                messages.push(format!(
+                    "npx skills remove skipped for {}: no agents selected",
+                    plan.skill_name
+                ));
+            }
+            _ => {
+                let cli = NpxSkillsCli { runner };
+                for agent in &plan.agents {
+                    match cli.remove(&plan.skill_name, *agent, plan.scope) {
+                        Ok(out) => {
+                            let detail = out.stdout.trim();
+                            if detail.is_empty() {
+                                messages.push(format!(
+                                    "npx skills remove {} @{}",
+                                    plan.skill_name, agent
+                                ));
+                            } else {
+                                messages.push(format!(
+                                    "npx skills remove {} @{}: {detail}",
+                                    plan.skill_name, agent
+                                ));
+                            }
                         }
-                    }
-                    Err(err) => {
-                        messages.push(format!("npx remove failed for {agent}: {err}"));
+                        Err(err) => {
+                            messages.push(format!("npx remove failed for {agent}: {err}"));
+                        }
                     }
                 }
             }
@@ -362,24 +381,44 @@ pub struct UpdateJob {
     pub name: String,
     pub scope: Scope,
     pub dirs: Vec<PathBuf>,
+    pub project: Option<PathBuf>,
 }
 
 pub fn execute_update(
     runner: &impl CommandRunner,
     backend: AddBackend,
     jobs: &[UpdateJob],
+    active_root: &Path,
 ) -> Result<String> {
     match backend {
         AddBackend::GhSkill => execute_update_gh(runner, jobs),
-        AddBackend::NpxSkills => execute_update_npx(runner, jobs),
+        AddBackend::NpxSkills => execute_update_npx(runner, jobs, active_root),
     }
 }
 
-fn execute_update_npx(runner: &impl CommandRunner, jobs: &[UpdateJob]) -> Result<String> {
+fn execute_update_npx(
+    runner: &impl CommandRunner,
+    jobs: &[UpdateJob],
+    active_root: &Path,
+) -> Result<String> {
     let cli = NpxSkillsCli { runner };
     let mut msgs = Vec::new();
+    let mut runnable = Vec::new();
+    for job in jobs {
+        if let (Scope::Project, Some(project)) = (job.scope, job.project.as_deref())
+            && !crate::config::paths_eq_canonical(project, active_root)
+        {
+            msgs.push(format!(
+                "npx skills update skipped for {}: project {} is not the active root",
+                job.name,
+                project.display()
+            ));
+            continue;
+        }
+        runnable.push(job);
+    }
     for scope in [Scope::User, Scope::Project] {
-        let names: Vec<&str> = jobs
+        let names: Vec<&str> = runnable
             .iter()
             .filter(|j| j.scope == scope)
             .map(|j| j.name.as_str())
@@ -549,6 +588,7 @@ mod tests {
             name: "x".into(),
             description: String::new(),
             scope: Scope::User,
+            project: None,
             agents: vec![Agent::Cursor],
             locations: vec![SkillLocation {
                 agent: Agent::Cursor,
@@ -582,6 +622,7 @@ mod tests {
         let plan = DeletePlan {
             skill_name: "find-skills".into(),
             scope: Scope::User,
+            project: None,
             agents: vec![Agent::Cursor, Agent::ClaudeCode],
             paths: vec![skill_dir.clone()],
             source: InstallSource::Npx,
@@ -601,7 +642,7 @@ mod tests {
             },
         ]);
 
-        let msgs = execute_delete(&runner, &plan, true).unwrap();
+        let msgs = execute_delete(&runner, &plan, true, tmp.path()).unwrap();
         assert!(msgs.iter().any(|m| m.contains("removed")));
         assert!(!skill_dir.exists());
 
@@ -627,6 +668,7 @@ mod tests {
         let plan = DeletePlan {
             skill_name: "manual".into(),
             scope: Scope::User,
+            project: None,
             agents: vec![Agent::Cursor],
             paths: vec![skill_dir],
             source: InstallSource::Manual,
@@ -639,8 +681,130 @@ mod tests {
             stderr: String::new(),
         }]);
 
-        execute_delete(&runner, &plan, true).unwrap();
+        execute_delete(&runner, &plan, true, tmp.path()).unwrap();
         assert!(runner.calls().is_empty());
+    }
+
+    #[test]
+    fn execute_delete_skips_npx_when_project_is_not_active_root() {
+        use crate::adapters::command::FakeCommandRunner;
+
+        let active = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let skill_dir = other.path().join("find-skills");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "---\nname: find-skills\n---\n").unwrap();
+
+        let plan = DeletePlan {
+            skill_name: "find-skills".into(),
+            scope: Scope::Project,
+            project: Some(other.path().to_path_buf()),
+            agents: vec![Agent::Cursor],
+            paths: vec![skill_dir.clone()],
+            source: InstallSource::Npx,
+            shared_warning: None,
+            plugin_warning: None,
+        };
+        let runner =
+            FakeCommandRunner::with_responses(vec![crate::adapters::command::CommandOutput {
+                status: 0,
+                stdout: "should-not-run".into(),
+                stderr: String::new(),
+            }]);
+
+        let msgs = execute_delete(&runner, &plan, true, active.path()).unwrap();
+        assert!(!skill_dir.exists());
+        assert!(
+            runner.calls().iter().all(|c| c.0 != "npx"),
+            "npx must not run against the process cwd for another project"
+        );
+        assert!(msgs.iter().any(|m| m.contains("npx skills remove skipped")
+            && m.contains(&other.path().display().to_string())));
+    }
+
+    #[test]
+    fn execute_delete_calls_npx_when_project_matches_active_root() {
+        use crate::adapters::command::{CommandOutput, FakeCommandRunner};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let skill_dir = tmp.path().join("find-skills");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "---\nname: find-skills\n---\n").unwrap();
+
+        let plan = DeletePlan {
+            skill_name: "find-skills".into(),
+            scope: Scope::Project,
+            project: Some(tmp.path().to_path_buf()),
+            agents: vec![Agent::Cursor],
+            paths: vec![skill_dir.clone()],
+            source: InstallSource::Npx,
+            shared_warning: None,
+            plugin_warning: None,
+        };
+        let runner = FakeCommandRunner::with_responses(vec![CommandOutput {
+            status: 0,
+            stdout: "ok".into(),
+            stderr: String::new(),
+        }]);
+
+        execute_delete(&runner, &plan, true, tmp.path()).unwrap();
+        let calls = runner.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "npx");
+        assert!(calls[0].1.contains(&"remove".into()));
+        assert!(calls[0].1.contains(&"find-skills".into()));
+        assert!(!skill_dir.exists());
+    }
+
+    #[test]
+    fn execute_update_npx_skips_jobs_for_other_projects() {
+        use crate::adapters::command::FakeCommandRunner;
+
+        let active = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let jobs = vec![UpdateJob {
+            name: "find-skills".into(),
+            scope: Scope::Project,
+            dirs: vec![],
+            project: Some(other.path().to_path_buf()),
+        }];
+        let runner =
+            FakeCommandRunner::with_responses(vec![crate::adapters::command::CommandOutput {
+                status: 0,
+                stdout: "should-not-run".into(),
+                stderr: String::new(),
+            }]);
+        let msg = execute_update(&runner, AddBackend::NpxSkills, &jobs, active.path()).unwrap();
+        assert!(
+            runner.calls().iter().all(|c| c.0 != "npx"),
+            "npx must not update the process cwd for another project"
+        );
+        assert!(msg.contains("skipped"));
+        assert!(msg.contains(&other.path().display().to_string()));
+    }
+
+    #[test]
+    fn execute_update_npx_runs_when_project_matches_active_root() {
+        use crate::adapters::command::{CommandOutput, FakeCommandRunner};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let jobs = vec![UpdateJob {
+            name: "find-skills".into(),
+            scope: Scope::Project,
+            dirs: vec![],
+            project: Some(tmp.path().to_path_buf()),
+        }];
+        let runner = FakeCommandRunner::with_responses(vec![CommandOutput {
+            status: 0,
+            stdout: "updated".into(),
+            stderr: String::new(),
+        }]);
+        execute_update(&runner, AddBackend::NpxSkills, &jobs, tmp.path()).unwrap();
+        let calls = runner.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "npx");
+        assert!(calls[0].1.contains(&"update".into()));
+        assert!(calls[0].1.contains(&"find-skills".into()));
     }
 
     #[test]
@@ -671,6 +835,7 @@ mod tests {
             name: "tdd".into(),
             description: String::new(),
             scope: Scope::User,
+            project: None,
             agents: vec![Agent::Cursor],
             locations: vec![SkillLocation {
                 agent: Agent::Cursor,
@@ -708,6 +873,7 @@ mod tests {
             name: "tdd".into(),
             description: String::new(),
             scope: Scope::User,
+            project: None,
             agents: vec![Agent::ClaudeCode, Agent::Cursor],
             locations: vec![
                 SkillLocation {
@@ -751,6 +917,7 @@ mod tests {
             name: "tdd".into(),
             description: String::new(),
             scope: Scope::User,
+            project: None,
             agents: vec![Agent::ClaudeCode, Agent::Cursor],
             locations: vec![
                 SkillLocation {
@@ -786,6 +953,7 @@ mod tests {
             name: "x".into(),
             description: String::new(),
             scope: Scope::User,
+            project: None,
             agents: vec![Agent::ClaudeCode],
             locations: vec![SkillLocation {
                 agent: Agent::ClaudeCode,

@@ -70,6 +70,12 @@ pub enum PendingAction {
 pub struct App {
     pub project_root: PathBuf,
     pub home: PathBuf,
+    /// Project-scope scan roots (config list + active cwd, home excluded).
+    pub scan_roots: Vec<PathBuf>,
+    /// Number of projects listed in config (status `projects:N` uses scan_roots.len()).
+    pub config_project_count: usize,
+    /// Config/resolve warnings kept across inventory reloads.
+    pub config_warnings: Vec<String>,
     pub skills: Vec<SkillRecord>,
     pub plugins: Vec<PluginRecord>,
     pub mcp_servers: Vec<McpServerRecord>,
@@ -124,7 +130,7 @@ pub struct App {
     pub delete_plans_cache: Vec<DeletePlan>,
     /// Cursor into the available-agents list for j/k + Space toggles.
     pub agent_focus: usize,
-    /// Multi-select marks keyed by (id, scope).
+    /// Multi-select marks keyed by (id, scope, project).
     pub checked: HashSet<SkillKey>,
     pub checked_plugins: HashSet<(String, Scope)>,
     pub checked_mcp: HashSet<(String, Scope, String)>,
@@ -155,6 +161,9 @@ impl App {
         Self {
             project_root,
             home,
+            scan_roots: Vec::new(),
+            config_project_count: 0,
+            config_warnings: Vec::new(),
             skills: Vec::new(),
             plugins: Vec::new(),
             mcp_servers: Vec::new(),
@@ -484,12 +493,13 @@ impl App {
                     String::new()
                 };
                 self.status = format!(
-                    "{} skills | gh:{} npx:{} | activations ready{} | {}",
+                    "{} skills | gh:{} npx:{} | activations ready{} | {}{}",
                     self.skills.len(),
                     if self.gh_available { "ok" } else { "missing" },
                     if self.npx_available { "ok" } else { "missing" },
                     trunc,
-                    self.project_root.display()
+                    self.project_root.display(),
+                    self.projects_status_suffix()
                 );
             }
             Err(err) => {
@@ -512,9 +522,10 @@ impl App {
         let opts = InventoryOptions {
             use_gh: self.gh_available,
         };
-        let inventory = build_inventory(&self.project_root, &self.home, &runner, &opts)?;
+        let inventory = build_inventory(&self.scan_roots, &self.home, &runner, &opts)?;
         let mut skills = inventory.skills;
-        self.warnings = inventory.warnings;
+        self.warnings = self.config_warnings.clone();
+        self.warnings.extend(inventory.warnings);
         self.plugins = inventory.plugins;
         self.mcp_servers = inventory.mcp;
 
@@ -559,7 +570,7 @@ impl App {
             )
         };
         self.status = format!(
-            "{} {} | {} plugins | {} mcp | gh:{} npx:{} claude:{} copilot:{} codex:{}{} | {}",
+            "{} {} | {} plugins | {} mcp | gh:{} npx:{} claude:{} copilot:{} codex:{}{} | {}{}",
             self.skills.len(),
             self.nav.as_str(),
             self.plugins.len(),
@@ -582,9 +593,18 @@ impl App {
                 "missing"
             },
             sel,
-            self.project_root.display()
+            self.project_root.display(),
+            self.projects_status_suffix()
         );
         Ok(())
+    }
+
+    fn projects_status_suffix(&self) -> String {
+        if self.config_project_count > 0 {
+            format!(" | projects:{}", self.scan_roots.len())
+        } else {
+            String::new()
+        }
     }
 
     pub fn recompute_view(&mut self) {
@@ -1392,6 +1412,9 @@ impl App {
             KeyCode::Char('q') => self.cancel_add(),
             KeyCode::Esc => self.mode = Mode::AddAgent,
             KeyCode::Char('p') => {
+                if self.block_project_add_when_active_is_home() {
+                    return;
+                }
                 self.add_scope = Scope::Project;
                 self.finish_add();
             }
@@ -1406,6 +1429,9 @@ impl App {
     /// Queue the add as a pending operation; the executor runs the CLI, does the
     /// full reload, and composes the result message.
     fn finish_add(&mut self) {
+        if self.add_scope == Scope::Project && self.block_project_add_when_active_is_home() {
+            return;
+        }
         let agents = std::mem::take(&mut self.add_agents);
         let scope = self.add_scope;
         let add_plugin = self.add_plugin;
@@ -1705,6 +1731,7 @@ impl App {
                 name: s.name.clone(),
                 scope: s.scope,
                 dirs: prefer_update_dirs(s, &agents),
+                project: s.project.clone(),
             })
             .collect();
         if self.update_jobs.is_empty() {
@@ -1770,6 +1797,18 @@ impl App {
         self.pending_action = Some(PendingAction::Update { backend, jobs });
     }
 
+    fn block_project_add_when_active_is_home(&mut self) -> bool {
+        if crate::config::active_is_home(&self.project_root, &self.home) {
+            self.show_message(
+                "project scope needs a project directory; run from a repo or pass --project-root"
+                    .into(),
+            );
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn show_message(&mut self, msg: String) {
         self.message = crate::adapters::command::strip_ansi(&msg);
         self.mode = Mode::Message;
@@ -1810,6 +1849,7 @@ impl App {
                 "id": s.id,
                 "name": s.name,
                 "scope": s.scope.as_str(),
+                "project": s.project.as_ref().map(|p| p.to_string_lossy().into_owned()),
                 "agents": s.agents.iter().map(|a| a.as_str()).collect::<Vec<_>>(),
                 "source": s.source.as_str(),
                 "author": s.author,
@@ -1970,6 +2010,7 @@ mod tests {
                 name: "alpha".into(),
                 description: "A".into(),
                 scope: Scope::User,
+                project: None,
                 agents: vec![Agent::Cursor],
                 locations: vec![],
                 install_kind: InstallKind::Copy,
@@ -1991,6 +2032,7 @@ mod tests {
                 name: "beta".into(),
                 description: "B".into(),
                 scope: Scope::Project,
+                project: None,
                 agents: vec![Agent::Codex],
                 locations: vec![],
                 install_kind: InstallKind::Symlink,
@@ -2142,6 +2184,7 @@ mod tests {
                 name: format!("s{i:02}"),
                 description: String::new(),
                 scope: Scope::User,
+                project: None,
                 agents: vec![Agent::Cursor],
                 locations: vec![],
                 install_kind: InstallKind::Copy,
@@ -2668,6 +2711,50 @@ mod tests {
             app.pending_action,
             Some(PendingAction::PluginDelete(_))
         ));
+    }
+
+    #[test]
+    fn reload_keeps_config_warnings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let proj = tmp.path().join("proj");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&proj).unwrap();
+        let mut app = App::new(proj, home);
+        app.scan_roots = vec![];
+        app.gh_available = false;
+        app.npx_available = false;
+        app.config_warnings = vec!["skip relative project path: foo".into()];
+        app.reload_light().unwrap();
+        assert!(app.warnings.iter().any(|w| w.contains("relative")));
+    }
+
+    #[test]
+    fn project_add_blocked_when_active_is_home() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let mut app = App::new(home.clone(), home.clone());
+        app.add_backend = AddBackend::NpxSkills;
+        app.add_package = "owner/repo".into();
+        app.add_agents = vec![Agent::Cursor];
+        app.add_scope = Scope::Project;
+        app.finish_add();
+        assert!(app.pending_action.is_none());
+        assert!(
+            app.message.contains("project")
+                || app.status.contains("project")
+                || app.message.contains("--project-root")
+        );
+    }
+
+    #[test]
+    fn dump_json_includes_project_field() {
+        let mut app = sample_app();
+        app.skills[1].project = Some(PathBuf::from("/tmp/proj"));
+        let value = app.dump_json_value();
+        assert_eq!(value["skills"][0]["project"], serde_json::Value::Null);
+        assert_eq!(value["skills"][1]["project"], "/tmp/proj");
     }
 
     #[test]

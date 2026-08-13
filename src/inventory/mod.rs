@@ -12,7 +12,7 @@ use crate::model::{
 };
 use anyhow::Result;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Default)]
 pub struct InventoryOptions {
@@ -28,23 +28,25 @@ pub struct Inventory {
 }
 
 pub fn build_inventory(
-    project_root: &Path,
+    project_roots: &[PathBuf],
     home: &Path,
     runner: &impl CommandRunner,
     opts: &InventoryOptions,
 ) -> Result<Inventory> {
     let mut warnings = Vec::new();
-    let (discovered, scan_warnings) = scan_skills(project_root, home)?;
+    let (discovered, scan_warnings) = scan_skills(project_roots, home)?;
     warnings.extend(scan_warnings);
-    let plugin_scan = scan_plugin_inventory(project_root, home)?;
+    // Plugin / MCP stores live under $HOME. The scanner ignores `project_root`,
+    // so looping every scan root would only duplicate the same user inventory.
+    let plugin_scan = scan_plugin_inventory(home, home)?;
     warnings.extend(plugin_scan.warnings);
     let mut skills = merge_discovered(discovered.into_iter().chain(plugin_scan.skills).collect());
     let plugins = merge_plugins(plugin_scan.plugins);
     let mcp = merge_mcp(plugin_scan.mcp);
 
     // Fast path: npx skills lockfile (no process spawn).
-    for (scope, lock) in load_locks(project_root, home) {
-        enrich_with_skill_lock(&mut skills, &lock, scope);
+    for (scope, project, lock) in load_locks(project_roots, home) {
+        enrich_with_skill_lock(&mut skills, &lock, scope, project.as_deref());
     }
 
     if opts.use_gh {
@@ -71,12 +73,17 @@ pub fn merge_discovered(discovered: Vec<DiscoveredSkill>) -> Vec<SkillRecord> {
     let mut map: HashMap<SkillKey, SkillRecord> = HashMap::new();
 
     for d in discovered {
-        let key = (normalize_skill_id(&d.id, &d.name), d.location.scope);
+        let key = (
+            normalize_skill_id(&d.id, &d.name),
+            d.location.scope,
+            d.project.clone(),
+        );
         let entry = map.entry(key.clone()).or_insert_with(|| SkillRecord {
             id: key.0.clone(),
             name: d.name.clone(),
             description: d.description.clone(),
             scope: d.location.scope,
+            project: d.project.clone(),
             agents: Vec::new(),
             locations: Vec::new(),
             install_kind: d.location.kind,
@@ -269,6 +276,21 @@ fn gh_item_matches(rec: &SkillRecord, item: &GhSkillListItem, scope: Scope) -> b
     if rec.scope != scope {
         return false;
     }
+    // Plugin-attributed project rows have scope=Project but project=None.
+    // Name-only match would let them steal gh items meant for FS project rows.
+    if rec.scope == Scope::Project && rec.project.is_none() {
+        return gh_item_matches_location(rec, item, true);
+    }
+    if rec.project.is_some() {
+        return gh_item_matches_project_row(rec, item);
+    }
+    if gh_item_name_matches(rec, item) {
+        return true;
+    }
+    gh_item_matches_location(rec, item, false)
+}
+
+fn gh_item_name_matches(rec: &SkillRecord, item: &GhSkillListItem) -> bool {
     let leaf = item
         .skill_name
         .rsplit('/')
@@ -276,23 +298,45 @@ fn gh_item_matches(rec: &SkillRecord, item: &GhSkillListItem, scope: Scope) -> b
         .unwrap_or(&item.skill_name);
     let full_id = normalize_skill_id(&item.skill_name, &item.skill_name);
     let leaf_id = normalize_skill_id(leaf, leaf);
-    if rec.id == full_id || rec.id == leaf_id || rec.name == item.skill_name || rec.name == leaf {
+    rec.id == full_id || rec.id == leaf_id || rec.name == item.skill_name || rec.name == leaf
+}
+
+/// Project-tagged rows need path-under-root *and* name/id; path alone would
+/// let the first skill in the project steal every gh item under that root.
+fn gh_item_matches_project_row(rec: &SkillRecord, item: &GhSkillListItem) -> bool {
+    let under_root = !item.path.is_empty()
+        && rec
+            .project
+            .as_deref()
+            .is_some_and(|root| Path::new(&item.path).starts_with(root));
+    if under_root && gh_item_name_matches(rec, item) {
         return true;
     }
+    gh_item_matches_location(rec, item, true)
+}
+
+fn gh_item_matches_location(rec: &SkillRecord, item: &GhSkillListItem, exact_only: bool) -> bool {
     if item.path.is_empty() {
         return false;
     }
-    let item_path = std::path::PathBuf::from(&item.path);
+    let item_path = Path::new(&item.path);
     rec.locations.iter().any(|l| {
         l.path == item_path
-            || l.resolved.as_ref() == Some(&item_path)
-            || (l.path.file_name().is_some() && l.path.file_name() == item_path.file_name())
+            || l.resolved.as_deref() == Some(item_path)
+            || (!exact_only
+                && l.path.file_name().is_some()
+                && l.path.file_name() == item_path.file_name())
     })
 }
 
-pub fn enrich_with_skill_lock(records: &mut [SkillRecord], lock: &SkillLock, scope: Scope) {
+pub fn enrich_with_skill_lock(
+    records: &mut [SkillRecord],
+    lock: &SkillLock,
+    scope: Scope,
+    project: Option<&Path>,
+) {
     for rec in records.iter_mut() {
-        if rec.scope != scope {
+        if rec.scope != scope || rec.project.as_deref() != project {
             continue;
         }
         let entry = lock_entry_for(lock, rec);
@@ -462,7 +506,38 @@ mod tests {
             version: None,
             pinned: false,
             source: None,
+            project: None,
         }
+    }
+
+    fn disc_in_project(name: &str, agent: Agent, project: PathBuf) -> DiscoveredSkill {
+        let mut d = disc(name, agent, Scope::Project);
+        d.project = Some(project.clone());
+        d.location.path = project.join(".agents/skills").join(name);
+        d
+    }
+
+    #[test]
+    fn merge_keeps_same_name_in_different_projects_apart() {
+        let records = merge_discovered(vec![
+            disc_in_project("tdd", Agent::Cursor, PathBuf::from("/a")),
+            disc_in_project("tdd", Agent::Cursor, PathBuf::from("/b")),
+        ]);
+        assert_eq!(records.len(), 2);
+        let mut projects: Vec<_> = records.iter().filter_map(|r| r.project.clone()).collect();
+        projects.sort();
+        assert_eq!(projects, vec![PathBuf::from("/a"), PathBuf::from("/b")]);
+    }
+
+    #[test]
+    fn merge_still_collapses_user_copies_across_agents() {
+        let records = merge_discovered(vec![
+            disc("tdd", Agent::Cursor, Scope::User),
+            disc("tdd", Agent::ClaudeCode, Scope::User),
+        ]);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].project, None);
+        assert_eq!(records[0].agents.len(), 2);
     }
 
     #[test]
@@ -515,7 +590,7 @@ mod tests {
                 source_type: "github".into(),
             },
         );
-        enrich_with_skill_lock(&mut records, &lock, Scope::User);
+        enrich_with_skill_lock(&mut records, &lock, Scope::User, None);
         retain_plugin_source(&mut records[0]);
         assert_eq!(records[0].source, InstallSource::Npx);
     }
@@ -532,7 +607,7 @@ mod tests {
                 source_type: "github".into(),
             },
         );
-        enrich_with_skill_lock(&mut records, &lock, Scope::User);
+        enrich_with_skill_lock(&mut records, &lock, Scope::User, None);
         assert_eq!(records[0].author.as_deref(), Some("vercel-labs"));
     }
 
@@ -634,7 +709,7 @@ mod tests {
                 source_type: "github".into(),
             },
         );
-        enrich_with_skill_lock(&mut records, &lock, Scope::User);
+        enrich_with_skill_lock(&mut records, &lock, Scope::User, None);
         let find = records.iter().find(|r| r.name == "find-skills").unwrap();
         let tdd = records.iter().find(|r| r.name == "tdd").unwrap();
         assert_eq!(find.source, InstallSource::Npx);
@@ -677,7 +752,7 @@ mod tests {
 
         let runner = crate::adapters::command::FakeCommandRunner::default();
         let inventory =
-            build_inventory(&project, &home, &runner, &InventoryOptions::default()).unwrap();
+            build_inventory(&[project], &home, &runner, &InventoryOptions::default()).unwrap();
         let records = inventory.skills;
 
         let tdd = records.iter().find(|r| r.name == "tdd").unwrap();
@@ -713,7 +788,7 @@ mod tests {
 
         let runner = crate::adapters::command::FakeCommandRunner::default();
         let inventory =
-            build_inventory(&project, &home, &runner, &InventoryOptions::default()).unwrap();
+            build_inventory(&[project], &home, &runner, &InventoryOptions::default()).unwrap();
         assert!(inventory.plugins.iter().any(|p| p.name == "context7"));
         assert!(inventory.mcp.iter().any(|m| m.name == "docs"));
     }
@@ -736,6 +811,7 @@ mod tests {
             version: None,
             pinned: false,
             source: None,
+            project: None,
         }]);
         enrich_with_gh(
             &mut records,
@@ -765,5 +841,110 @@ mod tests {
             Some("https://github.com/ex/skills")
         );
         assert_eq!(records[0].source, InstallSource::Gh);
+    }
+
+    #[test]
+    fn enrich_gh_applies_only_to_matching_project_row() {
+        let mut records = merge_discovered(vec![
+            disc_in_project("tdd", Agent::Cursor, PathBuf::from("/a")),
+            disc_in_project("tdd", Agent::Cursor, PathBuf::from("/b")),
+        ]);
+        // Name-only find() would enrich whichever row comes first.
+        records.sort_by(|a, b| b.project.cmp(&a.project));
+        enrich_with_gh(
+            &mut records,
+            &[GhSkillListItem {
+                skill_name: "tdd".into(),
+                path: "/a/.cursor/skills/tdd".into(),
+                scope: "project".into(),
+                source_url: "https://github.com/ex/skills".into(),
+                version: "v1".into(),
+                pinned: false,
+                agent_hosts: vec!["cursor".into()],
+            }],
+        );
+        let a = records
+            .iter()
+            .find(|r| r.project.as_deref() == Some(Path::new("/a")))
+            .unwrap();
+        let b = records
+            .iter()
+            .find(|r| r.project.as_deref() == Some(Path::new("/b")))
+            .unwrap();
+        assert_eq!(
+            a.source_url.as_deref(),
+            Some("https://github.com/ex/skills")
+        );
+        assert_eq!(a.source, InstallSource::Gh);
+        assert_eq!(b.source_url, None);
+        assert_ne!(b.source, InstallSource::Gh);
+    }
+
+    #[test]
+    fn enrich_gh_does_not_steal_item_for_other_skill_in_same_project() {
+        let mut records = merge_discovered(vec![
+            disc_in_project("aaa", Agent::Cursor, PathBuf::from("/a")),
+            disc_in_project("tdd", Agent::Cursor, PathBuf::from("/a")),
+        ]);
+        enrich_with_gh(
+            &mut records,
+            &[GhSkillListItem {
+                skill_name: "tdd".into(),
+                path: "/a/.cursor/skills/tdd".into(),
+                scope: "project".into(),
+                source_url: "https://github.com/ex/skills".into(),
+                version: "v1".into(),
+                pinned: false,
+                agent_hosts: vec!["cursor".into()],
+            }],
+        );
+        let tdd = records.iter().find(|r| r.name == "tdd").unwrap();
+        let aaa = records.iter().find(|r| r.name == "aaa").unwrap();
+        assert_eq!(
+            tdd.source_url.as_deref(),
+            Some("https://github.com/ex/skills")
+        );
+        assert_eq!(tdd.source, InstallSource::Gh);
+        assert_eq!(aaa.source_url, None);
+        assert_ne!(aaa.source, InstallSource::Gh);
+    }
+
+    #[test]
+    fn enrich_gh_does_not_let_plugin_project_row_steal_item() {
+        let mut plugin = disc("tdd", Agent::ClaudeCode, Scope::Project);
+        plugin.location.path = PathBuf::from("/home/.claude/plugins/cache/m/sp/1.0.0/skills/tdd");
+        plugin.source = Some(InstallSource::Plugin);
+        let mut fs = disc_in_project("tdd", Agent::Cursor, PathBuf::from("/a"));
+        fs.location.path = PathBuf::from("/a/.cursor/skills/tdd");
+        let mut records = merge_discovered(vec![plugin, fs]);
+        records.sort_by(|a, b| a.project.cmp(&b.project));
+        assert!(
+            records[0].project.is_none(),
+            "plugin-style row (project=None) must be first"
+        );
+
+        enrich_with_gh(
+            &mut records,
+            &[GhSkillListItem {
+                skill_name: "tdd".into(),
+                path: "/a/.cursor/skills/tdd".into(),
+                scope: "project".into(),
+                source_url: "https://github.com/ex/skills".into(),
+                version: "v1".into(),
+                pinned: false,
+                agent_hosts: vec!["cursor".into()],
+            }],
+        );
+
+        let plugin_row = records.iter().find(|r| r.project.is_none()).unwrap();
+        let a = records
+            .iter()
+            .find(|r| r.project.as_deref() == Some(Path::new("/a")))
+            .unwrap();
+        assert_eq!(
+            a.source_url.as_deref(),
+            Some("https://github.com/ex/skills")
+        );
+        assert_eq!(plugin_row.source_url, None);
     }
 }

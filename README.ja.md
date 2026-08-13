@@ -64,11 +64,26 @@ skls --dump-json                     # TUI なしで JSON 出力（{ skills, plu
 
 起動時はスキル一覧を先に出し、その後に発動率をサンプリング解析する。既定上限なら通常 1〜2 秒程度で一覧まで到達する。
 
+### プロジェクトディレクトリ
+
+`skls` は、現在のディレクトリ（または `--project-root`）に加えて、`~/.config/skls/config.toml`（`$XDG_CONFIG_HOME` が設定されている場合は `$XDG_CONFIG_HOME/skls/config.toml`）に列挙した追加フォルダを、プロジェクトスコープのスキャン対象として扱います。
+
+```toml
+projects = [
+  "~/src/my-app",
+  "/abs/path/to/other-app",
+]
+```
+
+現在のディレクトリ（または `--project-root`）がホームディレクトリの場合、そのパス自体はプロジェクトとしてスキャンしません。設定に列挙したパスは引き続きスキャンします。異なるプロジェクトに同名のスキルがある場合は別行として表示します。一覧の `PROJECT` 列にはプロジェクトディレクトリの名前が入り、ユーザースコープの行は `-` になります。
+
+プロジェクトスコープでの追加は、引き続きアクティブなルート（カレントディレクトリ / `--project-root`）だけを対象にします。ルートがホームの場合は、ユーザースコープを選ぶか `--project-root` を指定してください。
+
 ## 画面
 
 左サイドバーでインベントリを分割する: **manual**（プラグイン同梱スキルも含む）· **gh** · **npx** · **plugins** · **mcp**。中央が一覧、右が詳細。`h`/`l`（または Tab）でサイドバーと一覧のフォーカスを切替。行頭の `[ ]` / `[x]` は複数選択。
 
-**スキル**の列は `NAME` · `SCOPE` · `SRC`（`plugin` / `gh skill` / `npx skills` / `manual`）· `AUTHOR` · `RATE` · `SCORE`。デフォルトソートは `delete_score` の降順（高いほど削除候補）。`S` で昇順/降順を切替。`s` でキーを変えるとそのキーの既定方向に戻る。作者は SKILL.md の frontmatter・プラグインマニフェスト・ソースリポジトリの GitHub owner から取得する。
+**スキル**の列は `NAME` · `SCOPE` · `PROJECT` · `SRC`（`plugin` / `gh skill` / `npx skills` / `manual`）· `AUTHOR` · `RATE` · `SCORE`。デフォルトソートは `delete_score` の降順（高いほど削除候補）。`S` で昇順/降順を切替。`s` でキーを変えるとそのキーの既定方向に戻る。作者は SKILL.md の frontmatter・プラグインマニフェスト・ソースリポジトリの GitHub owner から取得する。
 
 **プラグイン**の列は `NAME` · `SCOPE` · `MARKET` · `SK`（同梱スキル数）· `MCP`。
 

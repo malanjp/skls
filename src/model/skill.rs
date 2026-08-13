@@ -11,9 +11,10 @@ pub enum Scope {
     User,
 }
 
-/// Canonical skill identity: normalized id + scope. One type shared by the
-/// inventory merge, the multi-select marks, and the stats-preserving reload.
-pub type SkillKey = (String, Scope);
+/// Canonical skill identity: normalized id + scope + optional project root.
+/// One type shared by the inventory merge, the multi-select marks, and the
+/// stats-preserving reload.
+pub type SkillKey = (String, Scope, Option<PathBuf>);
 
 impl Scope {
     pub fn as_str(self) -> &'static str {
@@ -341,6 +342,9 @@ pub struct SkillRecord {
     pub name: String,
     pub description: String,
     pub scope: Scope,
+    /// Canonical project root when this row came from a project-scope FS scan.
+    /// `None` for user-scope rows and plugin-attributed project rows.
+    pub project: Option<PathBuf>,
     pub agents: Vec<Agent>,
     pub locations: Vec<SkillLocation>,
     pub install_kind: InstallKind,
@@ -355,7 +359,7 @@ pub struct SkillRecord {
 impl SkillRecord {
     /// The canonical inventory identity for this skill.
     pub fn key(&self) -> SkillKey {
-        (self.id.clone(), self.scope)
+        (self.id.clone(), self.scope, self.project.clone())
     }
 
     pub fn agents_label(&self) -> String {
@@ -561,12 +565,14 @@ mod tests {
     }
 
     #[test]
-    fn skill_key_uses_id_and_scope() {
+    fn skill_key_includes_project_for_project_scope() {
+        let proj = PathBuf::from("/tmp/repo");
         let rec = SkillRecord {
             id: "tdd".into(),
             name: "TDD".into(),
             description: String::new(),
             scope: Scope::Project,
+            project: Some(proj.clone()),
             agents: vec![],
             locations: vec![],
             install_kind: InstallKind::Copy,
@@ -577,7 +583,28 @@ mod tests {
             pinned: false,
             stats: SkillStats::default(),
         };
-        assert_eq!(rec.key(), (String::from("tdd"), Scope::Project));
+        assert_eq!(rec.key(), (String::from("tdd"), Scope::Project, Some(proj)));
+    }
+
+    #[test]
+    fn skill_key_user_has_no_project() {
+        let rec = SkillRecord {
+            id: "tdd".into(),
+            name: "TDD".into(),
+            description: String::new(),
+            scope: Scope::User,
+            project: None,
+            agents: vec![],
+            locations: vec![],
+            install_kind: InstallKind::Copy,
+            source: InstallSource::Manual,
+            source_url: None,
+            author: None,
+            version: None,
+            pinned: false,
+            stats: SkillStats::default(),
+        };
+        assert_eq!(rec.key(), (String::from("tdd"), Scope::User, None));
     }
 
     #[test]
@@ -611,6 +638,7 @@ mod tests {
             name: "find-skills".into(),
             description: "Discover agent skills".into(),
             scope: Scope::User,
+            project: None,
             agents: vec![Agent::Cursor, Agent::ClaudeCode],
             locations: vec![],
             install_kind: InstallKind::Copy,
