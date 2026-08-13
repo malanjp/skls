@@ -372,7 +372,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Mode::AddAgent => " j/k  Space  */x all/none  Enter=next  Esc=back ".to_string(),
         Mode::AddScope => " [p]project [u]user  Esc=back  q=cancel ".to_string(),
         Mode::List => format!(
-            " j/k  C-f/C-b page  t view  Space/* /x select  / search  f filter  s sort  S dir  a add  d del  u upd  r/R refresh  ?  q{warn} "
+            " j/k  C-f/C-b page  C-h/C-l home/end  t view  Space/* /x select  / search  f filter  s sort  S dir  a add  d del  u upd  r/R refresh  ?  q{warn} "
         ),
     };
     let p = Paragraph::new(text).block(Block::default().borders(Borders::ALL));
@@ -397,6 +397,8 @@ Keys
   j / k     move up/down
   C-f / PgDn  page down
   C-b / PgUp  page up
+  C-h / Home  first
+  C-l / End   last
   t         cycle view (skills → plugins → mcp)
   Space     toggle select
   *         select/clear all visible

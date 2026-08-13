@@ -83,6 +83,8 @@ On startup the skill list appears first, then activation is sampled. With defaul
 | `j` / `k` | Move |
 | `Ctrl+F` / `PgDn` | Page down (no wrap) |
 | `Ctrl+B` / `PgUp` | Page up (no wrap) |
+| `Ctrl+H` / `Home` | Jump to first row |
+| `Ctrl+L` / `End` | Jump to last row |
 | `t` | Cycle view (skills → plugins → mcp) |
 | `Space` | Toggle row selection |
 | `*` | Select / clear all visible |

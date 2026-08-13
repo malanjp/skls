@@ -753,6 +753,23 @@ impl App {
         self.sync_list_state();
     }
 
+    fn jump_list_home(&mut self) {
+        if self.filtered_indices.is_empty() {
+            return;
+        }
+        self.selected = 0;
+        self.sync_list_state();
+    }
+
+    fn jump_list_end(&mut self) {
+        let len = self.filtered_indices.len();
+        if len == 0 {
+            return;
+        }
+        self.selected = len - 1;
+        self.sync_list_state();
+    }
+
     fn cycle_sort_key(&mut self) {
         self.sort_key = self.sort_key.next();
         self.sort_dir = self.sort_key.default_dir();
@@ -839,6 +856,8 @@ impl App {
             match key.code {
                 KeyCode::Char('f' | 'F') => self.page_list(1),
                 KeyCode::Char('b' | 'B') => self.page_list(-1),
+                KeyCode::Char('h' | 'H') => self.jump_list_home(),
+                KeyCode::Char('l' | 'L') => self.jump_list_end(),
                 _ => {}
             }
             return Ok(());
@@ -863,6 +882,10 @@ impl App {
             }
             KeyCode::PageDown => self.page_list(1),
             KeyCode::PageUp => self.page_list(-1),
+            KeyCode::Home => self.jump_list_home(),
+            KeyCode::End => self.jump_list_end(),
+            // Many terminals send Backspace for Ctrl+H.
+            KeyCode::Backspace => self.jump_list_home(),
             KeyCode::Char('/') => {
                 self.mode = Mode::Search;
                 self.input = self.filters.query.clone();
@@ -1995,6 +2018,34 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL))
             .unwrap();
         assert_eq!(app.selected, 19);
+    }
+
+    #[test]
+    fn ctrl_h_and_l_jump_to_list_ends() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = named_skills_app(20);
+        app.selected = 10;
+        app.sync_list_state();
+        app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert_eq!(app.mode, Mode::List);
+        assert_eq!(app.selected, 19);
+        app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert_eq!(app.selected, 0);
+        app.selected = 7;
+        app.sync_list_state();
+        app.handle_key(KeyEvent::new(KeyCode::End, KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.selected, 19);
+        app.handle_key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.selected, 0);
+        app.selected = 4;
+        app.sync_list_state();
+        app.handle_key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.selected, 0);
     }
 
     #[test]
