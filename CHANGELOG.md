@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-13
+
 ### Highlights
 
 - **Left sidebar** — split the list into manual / gh / npx / plugins / mcp. `h`/`l` (Tab) move focus; `j`/`k` on the sidebar changes category; `t` still cycles. Skills are partitioned by source (manual includes plugin-bundled; gh / npx are those installers)
@@ -108,7 +110,9 @@ Initial release of **skls** (*skills list*).
 - Log matching is heuristic, not a precise skill-execution count
 - Listing and metrics work without `gh` / `npx`; only CLI-dependent actions are disabled
 
-[Unreleased]: https://github.com/malanjp/skls/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/malanjp/skls/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/malanjp/skls/releases/tag/v0.5.0
+[0.4.0]: https://github.com/malanjp/skls/releases/tag/v0.4.0
 [0.3.2]: https://github.com/malanjp/skls/releases/tag/v0.3.2
 [0.3.1]: https://github.com/malanjp/skls/releases/tag/v0.3.1
 [0.3.0]: https://github.com/malanjp/skls/releases/tag/v0.3.0
