@@ -16,7 +16,7 @@
 ## できること
 
 - **一覧**: 27 エージェントホスト（Cursor が読む `~/.agents/skills` も含む）。Claude Code / Cursor / Codex / agents プラグインに同梱されたスキルもスキャン。project / user とエージェントでフィルタ、複数選択で一括操作
-- **ビュー**: `t` で **skills → plugins → MCP** を切替。プラグインパッケージと同梱 MCP（`mcp.json`）も同じ TUI で見る
+- **サイドバー**: 左ナビで **agent**（manual + プラグイン同梱スキル）/ **gh** / **npx** / **plugins** / **mcp** に分割。`h`/`l`（または Tab）でフォーカス、サイドバー上の `j`/`k` でカテゴリ切替、`t` でも循環
 - **指標**: 会話ログから発動率を算出し、削除判断スコア（`delete_score`）を表示する
 - **追加**: スキルは `gh skill` / `npx skills`。プラグインは `claude plugin` / `copilot plugin` / `codex plugin`（Cursor にカタログ CLI は無い）
 - **削除**: インベントリ上のパスを削除（確認必須）。npx 由来は `npx skills remove` も実行。プラグイン削除はホストのカタログ CLI を先に使う。共有ストア / プラグイン内パスは警告
@@ -66,7 +66,7 @@ skls --dump-json                     # TUI なしで JSON 出力（{ skills, plu
 
 ## 画面
 
-`t` で一覧を切替: **skills → plugins → MCP**。左が一覧、右が詳細。行頭の `[ ]` / `[x]` は複数選択。
+左サイドバーでインベントリを分割する: **agent**（manual + プラグイン同梱スキル）· **gh** · **npx** · **plugins** · **mcp**。中央が一覧、右が詳細。`h`/`l`（または Tab）でサイドバーと一覧のフォーカスを切替。行頭の `[ ]` / `[x]` は複数選択。
 
 **スキル**の列は `NAME` · `SCOPE` · `SRC`（`plugin` / `gh skill` / `npx skills` / `manual`）· `AUTHOR` · `RATE` · `SCORE`。デフォルトソートは `delete_score` の降順（高いほど削除候補）。`S` で昇順/降順を切替。`s` でキーを変えるとそのキーの既定方向に戻る。作者は SKILL.md の frontmatter・プラグインマニフェスト・ソースリポジトリの GitHub owner から取得する。
 
@@ -80,12 +80,13 @@ skls --dump-json                     # TUI なしで JSON 出力（{ skills, plu
 
 | キー | 動作 |
 |------|------|
-| `j` / `k` | 移動 |
-| `Ctrl+F` / `PgDn` | 次ページ（端で止まる） |
-| `Ctrl+B` / `PgUp` | 前ページ（端で止まる） |
-| `gg` / `Home` | 先頭行へ |
-| `L` / `Ctrl+L` / `End` | 末尾行へ |
-| `t` | ビュー切替（skills → plugins → mcp） |
+| `h` / `l` | サイドバー / 一覧にフォーカス（`Tab` で切替） |
+| `j` / `k` | 移動（サイドバーまたは一覧） |
+| `Ctrl+F` / `PgDn` | 次ページ（端で止まる。一覧） |
+| `Ctrl+B` / `PgUp` | 前ページ（端で止まる。一覧） |
+| `gg` / `Home` | 先頭行（一覧）/ 先頭ナビ（サイドバー） |
+| `L` / `Ctrl+L` / `End` | 末尾行（一覧）/ 末尾ナビ（サイドバー） |
+| `t` | サイドバー循環（agent → gh → npx → plugins → mcp） |
 | `Space` | 行の選択トグル |
 | `*` | 表示中を全選択 / 全解除 |
 | `x` | 選択クリア |
@@ -93,7 +94,7 @@ skls --dump-json                     # TUI なしで JSON 出力（{ skills, plu
 | `f` | フィルタパネル |
 | `s` | ソートキー切替（`name` → `rate` → `delete_score` → `last_hit` → `author` → `source`）。そのキーの既定方向に戻す |
 | `S` | ソート方向の切替（昇順 / 降順） |
-| `a` | 追加フロー（スキル: `gh`/`npx`、プラグイン: カタログ CLI） |
+| `a` | 追加フロー（agent: `gh`/`npx` 選択、gh/npx ナビ: その backend、plugins: カタログ CLI） |
 | `d` | 削除確認（選択があれば一括、なければカーソル行） |
 | `u` | 更新 |
 | `r` | 軽い再スキャン（一覧のみ） |
@@ -113,16 +114,18 @@ skls --dump-json                     # TUI なしで JSON 出力（{ skills, plu
 
 ### 追加（`a`）
 
-**スキル**ビューではダイアログで順に進む。`Esc` で前のステップ、`q` で中止。
+**agent** ナビではダイアログで順に進む。`Esc` で前のステップ、`q` で中止。
 
 1. backend 選択: `1`/`g` = `gh skill`、`2`/`n` = `npx skills`
 2. ソース入力（gh: 検索語、npx: `owner/repo` または `owner/repo@skill`）
 3. 結果選択（gh の場合）
 4. エージェント（`j`/`k` で移動、`Space` でトグル、`*` 全選択、`x` 全解除。`Enter` で次へ）→ スコープ（`p`/`u`）で実行
 
-**プラグイン**ビューではカタログ spec（`name@marketplace`）を入力し、プラグイン CLI があるホスト（`claude-code` / `copilot` / `codex`）を選んでからスコープを決める。Cursor にカタログ CLI は無いので、ホストの marketplace から入れる。
+**gh** / **npx** ナビでは backend 選択を飛ばし、そのインストーラを直接使う。
 
-**MCP**ビューの `a` / `u` はプラグインビューへ誘導する（サーバーはプラグインに同梱される）。
+**plugins** ナビではカタログ spec（`name@marketplace`）を入力し、プラグイン CLI があるホスト（`claude-code` / `copilot` / `codex`）を選んでからスコープを決める。Cursor にカタログ CLI は無いので、ホストの marketplace から入れる。
+
+**mcp** ナビの `a` / `u` は plugins サイドバーへ誘導する（サーバーはプラグインに同梱される）。
 
 ### 削除（`d`）
 

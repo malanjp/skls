@@ -23,9 +23,9 @@ TUI でエージェントスキルを横断管理する。一覧（スキル / �
 src/
   main.rs          CLI・イベントループ・pending action
   lib.rs           モジュール公開
-  app.rs           TUI 状態機械・キーバインド（`t` で skills/plugins/mcp）
+  app.rs           TUI 状態機械・キーバインド（左ナビ: agent / gh / npx / plugins / mcp）
   model/skill.rs   Agent / Scope / SkillRecord / SkillFilters
-  model/catalog.rs ListView / PluginRecord / McpServerRecord / PluginBackend
+  model/catalog.rs NavItem / ListView / PluginRecord / McpServerRecord / PluginBackend
   inventory/       FS 発見 + gh / skill-lock のマージ
   adapters/
     fs.rs          skill_roots・SKILL.md スキャン
@@ -56,10 +56,10 @@ src/
 - 追加の初期選択は `Agent::primary()`（cursor / claude-code / codex）。`*` で全ホスト。
 - 削除: インベントリのパスを先に消す。`source == npx` かつ `npx` 利用可なら、その後必ず `npx skills remove`（early return しない）。
 - 更新: エージェント選択 → backend（gh / npx）。推定 backend は provenance / lock から。
-- ビュー切替: `t` で skills → plugins → mcp。スキル一覧のキーバインドは壊さない。
+- 左サイドバー: `agent`（manual + plugin 同梱スキル）/ `gh` / `npx` / `plugins` / `mcp`。`h`/`l`（または Tab）でフォーカス、`j`/`k` でナビ移動、`t` で循環。スキル一覧のキーバインドは壊さない。
 - プラグイン追加の初期選択は `plugin_cli_agents()`（claude-code / copilot / codex）。Cursor はカタログ CLI なし（marketplace から入れて、とメッセージ）。
 - プラグイン削除: カタログ CLI が成功したらパスは消さない。全部失敗したときだけ `remove_skill_path`。
-- MCP の追加・更新はプラグインビューへ誘導。削除は親プラグインのアンインストール確認。
+- MCP の追加・更新は plugins ナビへ誘導。削除は親プラグインのアンインストール確認。
 - `gh` / `npx` / `claude` / `copilot` / `codex` を起動時の一覧構築で必須にしない。
 
 ### テスト

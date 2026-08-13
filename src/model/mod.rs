@@ -1,5 +1,5 @@
-pub mod skill;
 pub mod catalog;
+pub mod skill;
 
-pub use skill::*;
 pub use catalog::*;
+pub use skill::*;

@@ -11,13 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Highlights
 
-- **MCP list** — `t` cycles skills → plugins → MCP. Bundled servers from plugin `mcp.json` / `.mcp.json` (Agent Plugins 1.0 and the looser `command`/`url` form)
+- **Left sidebar** — split the list into agent / gh / npx / plugins / mcp. `h`/`l` (Tab) move focus; `j`/`k` on the sidebar changes category; `t` still cycles. Skills are partitioned by source (agent = manual + plugin-bundled; gh / npx are those installers)
+- **MCP list** — bundled servers from plugin `mcp.json` / `.mcp.json` (Agent Plugins 1.0 and the looser `command`/`url` form)
 - **Plugin catalog ops** — add / update / uninstall from `claude plugin`, `copilot plugin`, and `codex plugin`. Cursor has no catalog CLI (install from the host marketplace). Listing still works without these binaries
 - **Paging and sort direction** — `Ctrl+F` / `Ctrl+B` (and PageDown / PageUp) move by a page; `gg` / `Home` jump to first, `L` / `Ctrl+L` / `End` to last; `S` toggles asc/desc
 
 ### Added
 
-- List views for installed plugin packages and bundled MCP servers (`t` to cycle). Plugin columns: `NAME` / `SCOPE` / `MARKET` / `SK` / `MCP`. MCP columns: `NAME` / `TRANS` / `PLUGIN` / `AGENTS`
+- Left sidebar (`nav`): `agent` / `gh` / `npx` / `plugins` / `mcp`, with counts. `h`/`l` or Tab to focus. Add from the gh / npx nav skips the backend picker
+- List views for installed plugin packages and bundled MCP servers. Plugin columns: `NAME` / `SCOPE` / `MARKET` / `SK` / `MCP`. MCP columns: `NAME` / `TRANS` / `PLUGIN` / `AGENTS`
 - Plugin add / update / delete via host catalog CLIs (`claude plugin install|update|uninstall`, `copilot plugin install|update|uninstall`, `codex plugin add|remove`). Codex update re-runs `plugin add`. If every uninstall CLI fails, inventory paths are removed as a fallback
 - `--dump-json` now prints `{ skills, plugins, mcp_servers }` instead of a bare skills array
 - Skill list `SRC` uses `plugin` / `gh skill` / `npx skills` / `manual`. A plugin copy no longer hides `npx skills` / `gh skill` when a lockfile, `~/.agents/skills`, or `gh skill list` says otherwise. Plugin-only paths stay `plugin`

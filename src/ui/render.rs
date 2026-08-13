@@ -1,8 +1,8 @@
 //! ratatui rendering for skls.
 
 use crate::analytics::delete_advice;
-use crate::app::{App, Mode};
-use crate::model::{Agent, ListView, agents_label, plugin_cli_agents};
+use crate::app::{App, FocusPane, Mode};
+use crate::model::{Agent, ListView, NavItem, agents_label, plugin_cli_agents};
 use crate::ops::AddBackend;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -82,7 +82,7 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
     let (sort_key, sort_dir) = app.displayed_sort();
     let title = format!(
         " skls  view:{}  scope:{}  agents:{}  sort:{}{}  window:{}d  sample:{}{selected} ",
-        app.list_view.as_str(),
+        app.nav.as_str(),
         scope_label(app.filters.scope),
         agents,
         sort_key.as_str(),
@@ -103,10 +103,16 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
 fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
     let panes = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+        .constraints([
+            Constraint::Length(20),
+            Constraint::Percentage(55),
+            Constraint::Percentage(45),
+        ])
         .split(area);
 
-    app.list_page_rows = panes[0].height.saturating_sub(2).max(1) as usize;
+    draw_sidebar(frame, app, panes[0]);
+
+    app.list_page_rows = panes[1].height.saturating_sub(2).max(1) as usize;
 
     let (items, list_title, detail) = match app.list_view {
         ListView::Skills => skill_list_content(app),
@@ -114,8 +120,18 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
         ListView::Mcp => mcp_list_content(app),
     };
 
+    let list_border = if app.focus == FocusPane::List && app.mode == Mode::List {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default()
+    };
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(list_title))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(list_title)
+                .border_style(list_border),
+        )
         .highlight_style(
             Style::default()
                 .fg(Color::Black)
@@ -124,12 +140,43 @@ fn draw_body(frame: &mut Frame, app: &mut App, area: Rect) {
         )
         .highlight_symbol(LIST_HIGHLIGHT)
         .highlight_spacing(HighlightSpacing::Always);
-    frame.render_stateful_widget(list, panes[0], &mut app.list_state);
+    frame.render_stateful_widget(list, panes[1], &mut app.list_state);
 
     let detail_widget = Paragraph::new(detail)
         .wrap(Wrap { trim: false })
         .block(Block::default().borders(Borders::ALL).title(" detail "));
-    frame.render_widget(detail_widget, panes[1]);
+    frame.render_widget(detail_widget, panes[2]);
+}
+
+fn draw_sidebar(frame: &mut Frame, app: &mut App, area: Rect) {
+    let items: Vec<ListItem> = NavItem::ALL
+        .iter()
+        .map(|&item| {
+            let line = format!("{:<8} {:>3}", item.label(), app.nav_count(item));
+            ListItem::new(Line::from(line))
+        })
+        .collect();
+    let border = if app.focus == FocusPane::Sidebar && app.mode == Mode::List {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default()
+    };
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" nav ")
+                .border_style(border),
+        )
+        .highlight_style(
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol(LIST_HIGHLIGHT)
+        .highlight_spacing(HighlightSpacing::Always);
+    frame.render_stateful_widget(list, area, &mut app.sidebar_state);
 }
 
 fn skill_list_content(app: &App) -> (Vec<ListItem<'static>>, String, String) {
@@ -334,7 +381,7 @@ fn mcp_list_content(app: &App) -> (Vec<ListItem<'static>>, String, String) {
                  paths\n\
                  {}\n\
                  \n\
-                 MCP configs live inside plugins. Add/update from the plugins view (t).",
+                 MCP configs live inside plugins. Add/update from the plugins sidebar item.",
                 m.name,
                 m.transport.as_str(),
                 m.plugin.as_deref().unwrap_or("-"),
@@ -373,7 +420,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
         Mode::AddAgent => " j/k  Space  */x all/none  Enter=next  Esc=back ".to_string(),
         Mode::AddScope => " [p]project [u]user  Esc=back  q=cancel ".to_string(),
         Mode::List => format!(
-            " j/k  C-f/C-b page  gg/L home/end  t view  Space/* /x select  / search  f filter  s sort  S dir  a add  d del  u upd  r/R refresh  ?  q{warn} "
+            " h/l pane  j/k  t nav  C-f/C-b page  gg/L home/end  Space/* /x select  / search  f filter  s sort  S dir  a add  d del  u upd  r/R refresh  ?  q{warn} "
         ),
     };
     let p = Paragraph::new(text).block(Block::default().borders(Borders::ALL));
@@ -395,12 +442,13 @@ fn draw_panel(frame: &mut Frame, title: &str, body: String, border: Color) {
 fn draw_help_modal(frame: &mut Frame) {
     let text = "\
 Keys
-  j / k     move up/down
-  C-f / PgDn  page down
-  C-b / PgUp  page up
+  h / l     focus sidebar / list (Tab toggles)
+  j / k     move (sidebar or list)
+  C-f / PgDn  page down (list)
+  C-b / PgUp  page up (list)
   gg / Home   first
   L / C-l / End  last
-  t         cycle view (skills → plugins → mcp)
+  t         cycle sidebar (agent → gh → npx → plugins → mcp)
   Space     toggle select
   *         select/clear all visible
   x         clear selection
@@ -408,7 +456,7 @@ Keys
   f         filter (scope · agents)
   s         cycle sort key (skills view)
   S         toggle sort direction (asc / desc)
-  a         add (skills: gh/npx · plugins: catalog CLI)
+  a         add (agent: gh/npx · gh/npx: that backend · plugins: catalog CLI)
   d         delete (selection or current row)
   u         update
   r         light rescan
@@ -416,14 +464,21 @@ Keys
   ?         this help
   q         quit
 
-Plugins (t)
+Sidebar
+  agent     manual + plugin-bundled skills
+  gh        gh skill installs
+  npx       npx skills installs
+  plugins   agent plugin packages
+  mcp       MCP servers bundled in plugins
+
+Plugins
   a  claude / copilot / codex plugin install  SPEC
   u  catalog update (codex re-runs plugin add)
   d  catalog uninstall (CLI first; path fallback)
   Cursor has no catalog CLI — install from the host marketplace
 
-MCP (t)
-  Bundled in plugins (mcp.json). a/u go to the plugins view.
+MCP
+  Bundled in plugins (mcp.json). a/u go to the plugins sidebar item.
   d uninstalls the parent plugin.
 
 Update (u) on skills

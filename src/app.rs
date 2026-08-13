@@ -7,8 +7,8 @@ use crate::analytics::{
 };
 use crate::inventory::{InventoryOptions, build_inventory};
 use crate::model::{
-    Agent, InstallSource, ListView, McpServerRecord, PluginRecord, Scope, SkillFilters, SkillKey,
-    SkillRecord, SortDir, SortKey, plugin_cli_agents,
+    Agent, InstallSource, ListView, McpServerRecord, NavItem, PluginRecord, Scope, SkillFilters,
+    SkillKey, SkillRecord, SortDir, SortKey, plugin_cli_agents,
 };
 use crate::ops::{
     AddBackend, DeletePlan, PluginDeletePlan, UpdateJob, plan_delete, plan_plugin_delete,
@@ -74,10 +74,15 @@ pub struct App {
     pub plugins: Vec<PluginRecord>,
     pub mcp_servers: Vec<McpServerRecord>,
     pub list_view: ListView,
+    /// Left-sidebar category (agent / gh / npx / plugins / mcp).
+    pub nav: NavItem,
+    /// Which pane receives j/k: sidebar vs the item list.
+    pub focus: FocusPane,
     pub filtered_indices: Vec<usize>,
     pub selected: usize,
     /// Keeps the skill list scrolled so `selected` stays visible.
     pub list_state: ListState,
+    pub sidebar_state: ListState,
     pub add_list_state: ListState,
     pub filters: SkillFilters,
     pub sort_key: SortKey,
@@ -137,6 +142,12 @@ pub struct App {
     pending_g: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusPane {
+    Sidebar,
+    List,
+}
+
 impl App {
     pub fn new(project_root: PathBuf, home: PathBuf) -> Self {
         let gh_available = crate::adapters::command::which_ok("gh");
@@ -148,9 +159,16 @@ impl App {
             plugins: Vec::new(),
             mcp_servers: Vec::new(),
             list_view: ListView::Skills,
+            nav: NavItem::Agent,
+            focus: FocusPane::List,
             filtered_indices: Vec::new(),
             selected: 0,
             list_state: {
+                let mut state = ListState::default();
+                state.select(Some(0));
+                state
+            },
+            sidebar_state: {
                 let mut state = ListState::default();
                 state.select(Some(0));
                 state
@@ -543,7 +561,7 @@ impl App {
         self.status = format!(
             "{} {} | {} plugins | {} mcp | gh:{} npx:{} claude:{} copilot:{} codex:{}{} | {}",
             self.skills.len(),
-            self.list_view.as_str(),
+            self.nav.as_str(),
             self.plugins.len(),
             self.mcp_servers.len(),
             if self.gh_available { "ok" } else { "missing" },
@@ -570,12 +588,14 @@ impl App {
     }
 
     pub fn recompute_view(&mut self) {
+        self.list_view = self.nav.list_view();
+        self.sidebar_state.select(Some(self.nav.index()));
         let mut idxs: Vec<usize> = match self.list_view {
             ListView::Skills => self
                 .skills
                 .iter()
                 .enumerate()
-                .filter(|(_, s)| self.filters.matches(s))
+                .filter(|(_, s)| self.nav.matches_skill(s) && self.filters.matches(s))
                 .map(|(i, _)| i)
                 .collect(),
             ListView::Plugins => self
@@ -722,10 +742,48 @@ impl App {
 
     /// Header / status sort label. Plugins and MCP are always name ascending.
     pub fn displayed_sort(&self) -> (SortKey, SortDir) {
-        match self.list_view {
+        match self.nav.list_view() {
             ListView::Skills => (self.sort_key, self.sort_dir),
             ListView::Plugins | ListView::Mcp => (SortKey::Name, SortDir::Asc),
         }
+    }
+
+    pub fn nav_count(&self, item: NavItem) -> usize {
+        match item {
+            NavItem::Agent | NavItem::Gh | NavItem::Npx => self
+                .skills
+                .iter()
+                .filter(|s| item.matches_skill(s) && self.filters.matches(s))
+                .count(),
+            NavItem::Plugins => self
+                .plugins
+                .iter()
+                .filter(|p| self.plugin_matches(p))
+                .count(),
+            NavItem::Mcp => self
+                .mcp_servers
+                .iter()
+                .filter(|m| self.mcp_matches(m))
+                .count(),
+        }
+    }
+
+    pub fn apply_nav(&mut self, nav: NavItem) {
+        self.nav = nav;
+        self.list_view = nav.list_view();
+        self.selected = 0;
+        self.recompute_view();
+        self.status = format!("view: {}", nav.as_str());
+    }
+
+    fn move_nav(&mut self, dir: i32) {
+        let len = NavItem::ALL.len() as i32;
+        let next = (self.nav.index() as i32 + dir).rem_euclid(len) as usize;
+        self.apply_nav(NavItem::from_index(next));
+    }
+
+    fn cycle_nav(&mut self) {
+        self.apply_nav(self.nav.next());
     }
 
     pub fn sync_list_state(&mut self) {
@@ -860,6 +918,9 @@ impl App {
     fn handle_list_key(&mut self, key: KeyEvent) -> Result<()> {
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             self.pending_g = false;
+            if self.focus == FocusPane::Sidebar {
+                return Ok(());
+            }
             match key.code {
                 KeyCode::Char('f' | 'F') => self.page_list(1),
                 KeyCode::Char('b' | 'B') => self.page_list(-1),
@@ -867,6 +928,17 @@ impl App {
                 _ => {}
             }
             return Ok(());
+        }
+        if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
+            self.pending_g = false;
+            self.focus = match self.focus {
+                FocusPane::Sidebar => FocusPane::List,
+                FocusPane::List => FocusPane::Sidebar,
+            };
+            return Ok(());
+        }
+        if self.focus == FocusPane::Sidebar {
+            return self.handle_sidebar_key(key);
         }
         if matches!(key.code, KeyCode::Char('g')) && !key.modifiers.contains(KeyModifiers::SHIFT) {
             if self.pending_g {
@@ -880,6 +952,9 @@ impl App {
         self.pending_g = false;
         match key.code {
             KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Char('h') | KeyCode::Left => {
+                self.focus = FocusPane::Sidebar;
+            }
             KeyCode::Char('j') | KeyCode::Down => {
                 if !self.filtered_indices.is_empty() {
                     self.selected = (self.selected + 1) % self.filtered_indices.len();
@@ -926,18 +1001,68 @@ impl App {
             KeyCode::Char('R') => {
                 self.pending_action = Some(PendingAction::AnalyzeActivations);
             }
-            KeyCode::Char('t') => {
-                self.list_view = self.list_view.next();
-                self.selected = 0;
-                self.recompute_view();
-                self.status = format!("view: {}", self.list_view.as_str());
-            }
+            KeyCode::Char('t') => self.cycle_nav(),
             KeyCode::Char(' ') => self.toggle_check_current(),
             KeyCode::Char('*') => self.select_all_visible(),
             KeyCode::Char('x') => self.clear_checked(),
             KeyCode::Char('a') => self.begin_add(),
             KeyCode::Char('d') => self.begin_delete(),
             KeyCode::Char('u') => self.begin_update(),
+            KeyCode::Char('?') => self.mode = Mode::Help,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_sidebar_key(&mut self, key: KeyEvent) -> Result<()> {
+        if matches!(key.code, KeyCode::Char('g')) && !key.modifiers.contains(KeyModifiers::SHIFT) {
+            if self.pending_g {
+                self.pending_g = false;
+                self.apply_nav(NavItem::Agent);
+            } else {
+                self.pending_g = true;
+            }
+            return Ok(());
+        }
+        self.pending_g = false;
+        match key.code {
+            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Char('j') | KeyCode::Down => self.move_nav(1),
+            KeyCode::Char('k') | KeyCode::Up => self.move_nav(-1),
+            KeyCode::Char('t') => self.cycle_nav(),
+            KeyCode::Char('l') | KeyCode::Right | KeyCode::Enter => {
+                self.focus = FocusPane::List;
+            }
+            KeyCode::Char('h') | KeyCode::Left => {}
+            KeyCode::Home => self.apply_nav(NavItem::Agent),
+            KeyCode::End | KeyCode::Char('L') => self.apply_nav(NavItem::Mcp),
+            KeyCode::Char('/') => {
+                self.mode = Mode::Search;
+                self.input = self.filters.query.clone();
+            }
+            KeyCode::Char('f') => self.mode = Mode::Filter,
+            KeyCode::Char('S') => self.toggle_sort_dir(),
+            KeyCode::Char('s') => {
+                if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    self.toggle_sort_dir();
+                } else {
+                    self.cycle_sort_key();
+                }
+            }
+            KeyCode::Char('r') => {
+                self.set_busy("Refreshing skill list …");
+                self.reload_light()?;
+                self.mode = Mode::List;
+                self.status = format!("{} (light refresh; R = recompute activations)", self.status);
+            }
+            KeyCode::Char('R') => {
+                self.pending_action = Some(PendingAction::AnalyzeActivations);
+            }
+            KeyCode::Char('a') => self.begin_add(),
+            KeyCode::Char('d') => self.begin_delete(),
+            KeyCode::Char('u') => self.begin_update(),
+            KeyCode::Char('*') => self.select_all_visible(),
+            KeyCode::Char('x') => self.clear_checked(),
             KeyCode::Char('?') => self.mode = Mode::Help,
             _ => {}
         }
@@ -1036,7 +1161,7 @@ impl App {
         match self.list_view {
             ListView::Mcp => {
                 self.show_message(
-                    "MCP servers are bundled in plugins. Switch to the plugins view (t) to add from a catalog.".into(),
+                    "MCP servers are bundled in plugins. Select plugins in the sidebar to add from a catalog.".into(),
                 );
             }
             ListView::Plugins => {
@@ -1058,7 +1183,23 @@ impl App {
             }
             ListView::Skills => {
                 self.add_plugin = false;
-                self.mode = Mode::AddBackend;
+                match self.nav {
+                    NavItem::Gh if self.gh_available => {
+                        self.add_backend = AddBackend::GhSkill;
+                        self.mode = Mode::AddQuery;
+                        self.input.clear();
+                        self.status = "gh skill: search keywords".into();
+                    }
+                    NavItem::Npx if self.npx_available => {
+                        self.add_backend = AddBackend::NpxSkills;
+                        self.mode = Mode::AddQuery;
+                        self.input.clear();
+                        self.status = "npx skills: owner/repo or owner/repo@skill".into();
+                    }
+                    _ => {
+                        self.mode = Mode::AddBackend;
+                    }
+                }
             }
         }
     }
@@ -1819,7 +1960,7 @@ fn union_plugin_agents<'a>(plugins: impl Iterator<Item = &'a PluginRecord>) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{InstallKind, InstallSource, SkillStats};
+    use crate::model::{InstallKind, InstallSource, NavItem, SkillStats};
 
     fn sample_app() -> App {
         let mut app = App::new("/tmp/proj".into(), "/tmp/home".into());
@@ -1853,7 +1994,7 @@ mod tests {
                 agents: vec![Agent::Codex],
                 locations: vec![],
                 install_kind: InstallKind::Symlink,
-                source: InstallSource::Gh,
+                source: InstallSource::Manual,
                 source_url: Some("https://x".into()),
                 author: None,
                 version: Some("v1".into()),
@@ -1928,7 +2069,7 @@ mod tests {
     #[test]
     fn sort_by_source_ranks_managed_first() {
         let mut app = sample_app();
-        app.skills[0].source = InstallSource::Npx;
+        app.skills[0].source = InstallSource::Plugin;
         app.skills[1].source = InstallSource::Manual;
         app.sort_key = SortKey::Source;
         app.sort_dir = SortKey::Source.default_dir();
@@ -2306,7 +2447,7 @@ mod tests {
     }
 
     #[test]
-    fn t_cycles_skills_plugins_mcp() {
+    fn t_cycles_sidebar_nav() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let mut app = sample_app();
         app.plugins = vec![sample_plugin()];
@@ -2322,17 +2463,87 @@ mod tests {
             locations: vec![],
             scope: Scope::User,
         }];
+        assert_eq!(app.nav, NavItem::Agent);
         app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE))
             .unwrap();
+        assert_eq!(app.nav, NavItem::Gh);
+        assert_eq!(app.list_view, ListView::Skills);
+        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.nav, NavItem::Npx);
+        app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.nav, NavItem::Plugins);
         assert_eq!(app.list_view, ListView::Plugins);
         assert_eq!(app.selected_plugin().unwrap().name, "fmt");
         app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE))
             .unwrap();
+        assert_eq!(app.nav, NavItem::Mcp);
         assert_eq!(app.list_view, ListView::Mcp);
         assert_eq!(app.selected_mcp().unwrap().name, "docs");
         app.handle_key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE))
             .unwrap();
+        assert_eq!(app.nav, NavItem::Agent);
         assert_eq!(app.list_view, ListView::Skills);
+    }
+
+    #[test]
+    fn sidebar_jk_switches_nav_and_hl_moves_focus() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = sample_app();
+        app.skills[1].source = InstallSource::Gh;
+        app.recompute_view();
+        assert_eq!(app.focus, FocusPane::List);
+        assert_eq!(app.filtered_indices.len(), 1);
+        assert_eq!(app.selected_skill().unwrap().name, "alpha");
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.focus, FocusPane::Sidebar);
+        app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.nav, NavItem::Gh);
+        assert_eq!(app.selected_skill().unwrap().name, "beta");
+        app.handle_key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.focus, FocusPane::List);
+        app.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.selected_skill().unwrap().name, "beta");
+    }
+
+    #[test]
+    fn nav_hides_other_sources() {
+        let mut app = sample_app();
+        app.skills[1].source = InstallSource::Npx;
+        app.apply_nav(NavItem::Agent);
+        let names: Vec<&str> = app
+            .filtered_indices
+            .iter()
+            .map(|&i| app.skills[i].name.as_str())
+            .collect();
+        assert_eq!(names, vec!["alpha"]);
+        app.apply_nav(NavItem::Npx);
+        let names: Vec<&str> = app
+            .filtered_indices
+            .iter()
+            .map(|&i| app.skills[i].name.as_str())
+            .collect();
+        assert_eq!(names, vec!["beta"]);
+        assert_eq!(app.nav_count(NavItem::Agent), 1);
+        assert_eq!(app.nav_count(NavItem::Npx), 1);
+        assert_eq!(app.nav_count(NavItem::Gh), 0);
+    }
+
+    #[test]
+    fn gh_nav_add_skips_backend_picker() {
+        let mut app = sample_app();
+        app.gh_available = true;
+        app.apply_nav(NavItem::Gh);
+        app.begin_add();
+        assert_eq!(app.mode, Mode::AddQuery);
+        assert_eq!(app.add_backend, AddBackend::GhSkill);
+        assert!(!app.add_plugin);
     }
 
     #[test]
@@ -2374,8 +2585,7 @@ mod tests {
         ];
         app.sort_key = SortKey::Score;
         app.sort_dir = SortDir::Desc;
-        app.list_view = ListView::Plugins;
-        app.recompute_view();
+        app.apply_nav(NavItem::Plugins);
         assert_eq!(app.displayed_sort(), (SortKey::Name, SortDir::Asc));
         let plugin_names: Vec<&str> = app
             .filtered_indices
@@ -2386,8 +2596,7 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE))
             .unwrap();
         assert_eq!(app.sort_key, SortKey::Score);
-        app.list_view = ListView::Mcp;
-        app.recompute_view();
+        app.apply_nav(NavItem::Mcp);
         assert_eq!(app.displayed_sort(), (SortKey::Name, SortDir::Asc));
         let mcp_names: Vec<&str> = app
             .filtered_indices
@@ -2401,7 +2610,7 @@ mod tests {
     fn plugin_add_flow_queues_pending_action() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let mut app = sample_app();
-        app.list_view = ListView::Plugins;
+        app.apply_nav(NavItem::Plugins);
         app.claude_available = true;
         app.copilot_available = false;
         app.codex_available = false;
@@ -2438,10 +2647,10 @@ mod tests {
     #[test]
     fn mcp_add_redirects_to_plugins_message() {
         let mut app = sample_app();
-        app.list_view = ListView::Mcp;
+        app.apply_nav(NavItem::Mcp);
         app.begin_add();
         assert_eq!(app.mode, Mode::Message);
-        assert!(app.message.contains("plugins view"));
+        assert!(app.message.contains("sidebar"));
     }
 
     #[test]
@@ -2449,8 +2658,7 @@ mod tests {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let mut app = sample_app();
         app.plugins = vec![sample_plugin()];
-        app.list_view = ListView::Plugins;
-        app.recompute_view();
+        app.apply_nav(NavItem::Plugins);
         app.begin_delete();
         assert_eq!(app.mode, Mode::DeleteConfirm);
         assert!(!app.plugin_delete_plans_cache.is_empty());
