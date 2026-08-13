@@ -55,6 +55,10 @@ pub fn build_inventory(
         }
     }
 
+    for rec in &mut skills {
+        retain_plugin_source(rec);
+    }
+
     Ok(Inventory {
         skills,
         plugins,
@@ -113,6 +117,7 @@ pub fn merge_discovered(discovered: Vec<DiscoveredSkill>) -> Vec<SkillRecord> {
 
     let mut records: Vec<SkillRecord> = map.into_values().collect();
     for r in &mut records {
+        retain_plugin_source(r);
         r.agents.sort_by_key(|a| a.as_str());
         r.locations
             .sort_by(|a, b| a.agent.as_str().cmp(b.agent.as_str()));
@@ -320,7 +325,9 @@ fn apply_gh_item(rec: &mut SkillRecord, item: &GhSkillListItem, scope: Scope) {
     // Prefer non-empty provenance; never clobber an existing URL with empty.
     if !item.source_url.is_empty() {
         rec.source_url = Some(item.source_url.clone());
-        rec.source = InstallSource::Gh;
+        if rec.source != InstallSource::Plugin {
+            rec.source = InstallSource::Gh;
+        }
         if rec.author.is_none() {
             rec.author = github_owner(&item.source_url);
         }
@@ -369,7 +376,8 @@ fn prefer_kind(a: InstallKind, b: InstallKind) -> InstallKind {
 }
 
 fn prefer_source(a: InstallSource, b: InstallSource) -> InstallSource {
-    // Gh > Npx > Plugin > Manual.
+    // Gh > Npx > Plugin > Manual. Plugin-only rows are forced back to Plugin
+    // after merge/enrich via [`retain_plugin_source`].
     let rank = |s: InstallSource| match s {
         InstallSource::Gh => 3,
         InstallSource::Npx => 2,
@@ -377,6 +385,23 @@ fn prefer_source(a: InstallSource, b: InstallSource) -> InstallSource {
         InstallSource::Manual => 0,
     };
     if rank(b) > rank(a) { b } else { a }
+}
+
+/// Skills whose inventory paths all live inside a plugin stay `plugin`,
+/// even when SKILL.md / `gh skill list` also carry GitHub provenance.
+fn retain_plugin_source(rec: &mut SkillRecord) {
+    if rec.locations.is_empty() {
+        return;
+    }
+    let all_plugin = rec.locations.iter().all(|l| {
+        crate::ops::is_plugin_path(&l.path)
+            || l.resolved
+                .as_ref()
+                .is_some_and(|p| crate::ops::is_plugin_path(p))
+    });
+    if all_plugin {
+        rec.source = InstallSource::Plugin;
+    }
 }
 
 #[cfg(test)]
@@ -458,6 +483,34 @@ mod tests {
         assert_eq!(records[0].source, InstallSource::Gh);
         assert_eq!(records[0].version.as_deref(), Some("v2"));
         assert!(records[0].pinned);
+    }
+
+    #[test]
+    fn enrich_does_not_override_plugin_source() {
+        let mut d = disc("tdd", Agent::ClaudeCode, Scope::User);
+        d.location.path = PathBuf::from("/home/.claude/plugins/cache/m/sp/1.0.0/skills/tdd");
+        d.source = Some(InstallSource::Plugin);
+        d.source_url = Some("https://github.com/ex/skills".into());
+        let mut records = merge_discovered(vec![d]);
+        assert_eq!(records[0].source, InstallSource::Plugin);
+        enrich_with_gh(
+            &mut records,
+            &[GhSkillListItem {
+                skill_name: "tdd".into(),
+                path: "/home/.claude/plugins/cache/m/sp/1.0.0/skills/tdd".into(),
+                scope: "user".into(),
+                source_url: "https://github.com/ex/skills".into(),
+                version: "v2".into(),
+                pinned: false,
+                agent_hosts: vec!["claude-code".into()],
+            }],
+        );
+        retain_plugin_source(&mut records[0]);
+        assert_eq!(records[0].source, InstallSource::Plugin);
+        assert_eq!(
+            records[0].source_url.as_deref(),
+            Some("https://github.com/ex/skills")
+        );
     }
 
     #[test]
