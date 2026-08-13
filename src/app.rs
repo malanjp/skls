@@ -1848,6 +1848,7 @@ impl App {
                 "id": s.id,
                 "name": s.name,
                 "scope": s.scope.as_str(),
+                "project": s.project.as_ref().map(|p| p.to_string_lossy().into_owned()),
                 "agents": s.agents.iter().map(|a| a.as_str()).collect::<Vec<_>>(),
                 "source": s.source.as_str(),
                 "author": s.author,
@@ -2742,6 +2743,15 @@ mod tests {
                 || app.status.contains("project")
                 || app.message.contains("--project-root")
         );
+    }
+
+    #[test]
+    fn dump_json_includes_project_field() {
+        let mut app = sample_app();
+        app.skills[1].project = Some(PathBuf::from("/tmp/proj"));
+        let value = app.dump_json_value();
+        assert_eq!(value["skills"][0]["project"], serde_json::Value::Null);
+        assert_eq!(value["skills"][1]["project"], "/tmp/proj");
     }
 
     #[test]
