@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-14
+
+### Highlights
+
+- **Project config** — `~/.config/skls/config.toml` lists extra scan roots. Missing file: discover under well-known home children (`repos`, `src`, `ghq`, …) and write the list. Same-named skills in different projects are separate rows, with a `PROJECT` column
+- **Sidebar projects** — scan roots appear under a divider; selecting one filters skills by path. Add / update with project scope still uses cwd / `--project-root`
+- **Column widths** — `NAME` / `PROJECT` / `SRC` / `AUTHOR` (and plugin / MCP equivalents) grow with content; leftover width goes to the name column
+
 ### Added
 
 - User config at `~/.config/skls/config.toml` (`$XDG_CONFIG_HOME/skls/config.toml`). `projects` lists extra project-scope scan roots. `window_days` / `max_sessions` / `max_bytes` supply defaults when CLI flags are omitted. If the file is missing, skls discovers project-scope skill directories under well-known home children (`repos`, `src`, `dev`, `code`, `work`, `projects`, `orca`, `Documents`, `Developer`, `ghq`, `git`) and writes the config. Nothing found → no file (retry next launch). An existing file is never overwritten
@@ -124,7 +132,8 @@ Initial release of **skls** (*skills list*).
 - Log matching is heuristic, not a precise skill-execution count
 - Listing and metrics work without `gh` / `npx`; only CLI-dependent actions are disabled
 
-[Unreleased]: https://github.com/malanjp/skls/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/malanjp/skls/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/malanjp/skls/releases/tag/v0.6.0
 [0.5.0]: https://github.com/malanjp/skls/releases/tag/v0.5.0
 [0.4.0]: https://github.com/malanjp/skls/releases/tag/v0.4.0
 [0.3.2]: https://github.com/malanjp/skls/releases/tag/v0.3.2

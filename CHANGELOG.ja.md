@@ -8,6 +8,14 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-14
+
+### ハイライト
+
+- **プロジェクト設定** — `~/.config/skls/config.toml` で追加のスキャン対象を列挙。ファイルが無いときはホーム直下の決まった配下（`repos` / `src` / `ghq` など）から探して書く。異なるプロジェクトの同名スキルは別行。`PROJECT` 列を表示
+- **サイドバーのプロジェクト** — スキャン対象を仕切りの下に列挙。選ぶとパスで絞り込む。プロジェクトスコープの追加・更新は cwd / `--project-root` のまま
+- **列幅** — `NAME` / `PROJECT` / `SRC` / `AUTHOR`（とプラグイン・MCP の相当列）を内容に合わせて伸ばし、余りは名前列へ
+
 ### 追加
 
 - ユーザー設定 `~/.config/skls/config.toml`（`$XDG_CONFIG_HOME/skls/config.toml`）。`projects` で追加のプロジェクトスコープスキャン対象を列挙。`window_days` / `max_sessions` / `max_bytes` は CLI 未指定時の既定。ファイルが無いときはホーム直下の決まった配下（`repos` / `src` / `dev` / `code` / `work` / `projects` / `orca` / `Documents` / `Developer` / `ghq` / `git`）からプロジェクトスコープのスキルディレクトリを探して設定を生成する。何も無ければファイルは作らない（次の起動で再試行）。既存ファイルは上書きしない
@@ -123,7 +131,8 @@
 - ログ照合はヒューリスティックであり、厳密なスキル実行回数ではない
 - `gh` / `npx` がなくても一覧と指標は動く。CLI 依存の操作だけ無効になる
 
-[Unreleased]: https://github.com/malanjp/skls/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/malanjp/skls/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/malanjp/skls/releases/tag/v0.6.0
 [0.5.0]: https://github.com/malanjp/skls/releases/tag/v0.5.0
 [0.4.0]: https://github.com/malanjp/skls/releases/tag/v0.4.0
 [0.3.2]: https://github.com/malanjp/skls/releases/tag/v0.3.2
